@@ -164,11 +164,14 @@ const server = http.createServer(async (req, res) => {
       const id = random(), callback = p.get('redirect_uri'), app = appName(callback), host = new URL(callback).hostname;
       pending.set(id, {challenge: p.get('code_challenge'), state: p.get('state'), client: p.get('client_id'), callback, resource, expires: Date.now() + 600000});
       res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
-        'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"});
+        // same-origin, not no-referrer: with no-referrer the browser sends "Origin: null" on the approve button.
+        'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"});
       return res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>千千的一起听 · 授权</title><style>body{font:18px system-ui;max-width:460px;margin:60px auto;padding:24px;background:#f4f5fb;color:#202338}input,button{box-sizing:border-box;width:100%;padding:14px;margin:12px 0;font:inherit}button{background:#5c55cc;color:white;border:0;border-radius:10px}.to{background:#fff;border:2px solid #5c55cc;border-radius:10px;padding:12px;word-break:break-all}.to b{font-size:22px}</style><h1>连接千千的一起听</h1><p>允许 ${escape(app)} 读取一起听消息、歌曲和歌词，并通过音乐工具发送回复及控制账号音乐功能。</p><p class="to">授权后会跳转到：<br><b>${escape(host)}</b><br><small>${escape(callback)}</small></p><p>如果上面不是你正在连接的 ${escape(app)}，请直接关闭此页。</p><p>请输入手机 Termux 中显示的连接密钥。不是网易云密码。</p><form method="post" action="/oauth/authorize"><input type="hidden" name="request_id" value="${id}"><input type="password" name="password" autocomplete="current-password" required placeholder="连接密钥"><button type="submit">允许 ${escape(app)} 连接</button></form><p>不授权可直接关闭此页。</p></html>`);
     }
     if (u.pathname === '/oauth/authorize' && req.method === 'POST') {
-      if (req.headers.origin && req.headers.origin !== ORIGIN) return json(res, 403, {error: 'invalid_origin'});
+      // Pages opened before this fix (or strict browsers) still send "Origin: null"; accept it only for a same-site form post.
+      const origin = req.headers.origin, sameSite = req.headers['sec-fetch-site'] === 'same-origin';
+      if (origin && origin !== ORIGIN && !(origin === 'null' && sameSite)) return json(res, 403, {error: 'invalid_origin'});
       const params = await form(req), id = params.get('request_id'), session = live(pending, id);
       if (!session) return json(res, 400, {error: 'authorization_expired', hint: 'Restart connection from ChatGPT or Claude'});
       failures = failures.filter(t => t > Date.now() - 60000);

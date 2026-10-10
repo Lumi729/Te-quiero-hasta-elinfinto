@@ -55,11 +55,16 @@ async function authorize(base: string, clientId: string, callback: string, resou
   if (resource) query.set("resource", resource);
   const page = await fetch(base + "/oauth/authorize?" + query);
   assert.equal(page.status, 200);
+  assert.equal(page.headers.get("referrer-policy"), "same-origin", "approve button posts a real Origin");
   const html = await page.text();
   const requestId = /name="request_id" value="([^"]+)"/.exec(html)![1];
   const wrong = await fetch(base + "/oauth/authorize", form({ request_id: requestId, password: "nope" }));
   assert.equal(wrong.status, 403, "only the owner's connection key approves");
-  const approved = await fetch(base + "/oauth/authorize", { ...form({ request_id: requestId, password: KEY }), redirect: "manual" });
+  const forged = await fetch(base + "/oauth/authorize", { ...form({ request_id: requestId, password: KEY }), headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.example" } });
+  assert.equal(forged.status, 403, "other sites cannot post the approval");
+  const opaque = await fetch(base + "/oauth/authorize", { ...form({ request_id: requestId, password: KEY }), headers: { "content-type": "application/x-www-form-urlencoded", origin: "null", "sec-fetch-site": "cross-site" } });
+  assert.equal(opaque.status, 403, "null origin from another site is refused");
+  const approved = await fetch(base + "/oauth/authorize", { ...form({ request_id: requestId, password: KEY }), headers: { "content-type": "application/x-www-form-urlencoded", origin: "null", "sec-fetch-site": "same-origin" }, redirect: "manual" });
   assert.equal(approved.status, 303);
   const location = new URL(approved.headers.get("location")!);
   assert.equal(location.origin + location.pathname, callback);
