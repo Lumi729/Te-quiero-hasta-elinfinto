@@ -4,3 +4,12 @@ dist/
 *.log
 .DS_Store
 .cursor/
+
+# Personal deployment secrets and media
+.netease-cookie
+.access-key
+.env.*
+!.env.example
+*.pem
+*.mp3
+*.wav

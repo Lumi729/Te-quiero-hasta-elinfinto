@@ -1,3 +1,13 @@
+# Te quiero hasta el infinito · 千千的一起听
+
+Lumi729 的个人分支，基于 **Yancey × Cove / Cove Resonance**，保留原 MIT 许可证及署名。
+
+新增实验：`netease_audio_clip` 获取账号可播放的歌曲短片段并返回 MCP 音频。
+**音频已生成不等于 ChatGPT 已听到；客户端兼容性仍需实测。**
+部署、测试与回退见 **[音频实验说明](docs/AUDIO_EXPERIMENT.zh-CN.md)**。
+
+---
+
 # Cove Resonance
 
 > **V2 — accepted on 2026-09-28**

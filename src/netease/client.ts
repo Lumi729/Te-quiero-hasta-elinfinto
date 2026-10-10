@@ -455,6 +455,18 @@ export class NeteaseClient {
     });
   }
 
+  async getSongAudioSource(songId: string): Promise<{ url: string; preview: boolean }> {
+    const body = await this.call("song_url_v1", { id: songId, level: "standard" });
+    const rows = Array.isArray(body.data) ? body.data : [];
+    const row = rows.map(asRecord).find((item) => readString(item.id) === songId);
+    const url = row && readString(row.url);
+    if (!row || readNumber(row.code) !== 200 || !url) {
+      throw new Error("audio_unavailable_for_account");
+    }
+    // A trial's timeline can differ from the full recording; do not mislabel it.
+    return { url, preview: row.freeTrialInfo != null };
+  }
+
   async getSongDetails(songId: string): Promise<SongDetails> {
     const body = await this.call("song_detail", { ids: songId });
     const songs = Array.isArray(body.songs) ? body.songs : [];
