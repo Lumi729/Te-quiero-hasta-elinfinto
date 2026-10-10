@@ -85,6 +85,27 @@ export async function getAudioClip(
   }
 }
 
+// File-only delivery experiment: preserve the existing clip tool and its safeguards.
+export async function getAudioFile(
+  raw: Input,
+  client: Pick<NeteaseClient, "getSongAudioSource">,
+  state: Pick<PlaybackStateStore, "getCurrentState">,
+  dependencies: Dependencies = {},
+  requestSignal?: AbortSignal,
+): Promise<CallToolResult> {
+  const result = await getAudioClip(raw, client, state, dependencies, requestSignal);
+  if (result.isError) return result;
+  const audio = result.content.find(block => block.type === "audio");
+  const link = result.content.find(block => block.type === "resource_link");
+  if (!audio || audio.type !== "audio" || !link || link.type !== "resource_link") {
+    return failure("audio_file_resource_unavailable");
+  }
+  return { content: [
+    { type: "resource", resource: { uri: link.uri, mimeType: "audio/wav", blob: audio.data } },
+    { ...link, description: "Download this WAV or read its MCP resource before expiry (five minutes). Only analyze sound if the host supplies actual audio input. A file path or URL alone is not evidence of hearing. Keep this private link confidential." },
+  ] };
+}
+
 async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw new Error("cancelled");
   let abort: () => void = () => {};
@@ -97,6 +118,12 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
 }
 
 export function registerNeteaseAudioTools(server: McpServer, client: NeteaseClient, state: PlaybackStateStore): void {
+  server.registerTool("netease_audio_file", {
+    title: "Get a WAV audio attachment (experimental)",
+    description: "Return a real WAV excerpt as an embedded MCP binary file resource and a five-minute resource_link, both audio/wav. Defaults to the current Together song and 15 seconds. Use only when the user requests actual audio. No playback changes. File attachment delivery does not guarantee model audio input: if only a file path, URL or metadata is visible, report unsupported input and use ordinary chat upload instead. Do not infer sound from metadata or call repeatedly automatically.",
+    inputSchema: inputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  }, async (input, extra) => getAudioFile(input, client, state, {}, extra.signal));
   server.registerTool("netease_audio_clip", {
     title: "Listen to a short song excerpt (experimental)",
     description: "Fetch account-playable NetEase audio and return a 5–30 second WAV as MCP audio content plus a five-minute resource_link to the same WAV (resources/read or HTTPS). File delivery does not guarantee host audio understanding. Use only when the user asks to hear/analyze the actual audio. Omitting songId selects the current Together song and the last 15 seconds of its progress; explicit songId starts at zero unless startSeconds is provided. Does not change playback. Host audio-input support is unverified: never pretend to hear audio if the host only delivers text. Not live listening; do not loop automatically.",

@@ -167,6 +167,19 @@ test("MCP tools/call delivers a decodable audio block through the SDK", async ()
     assert.equal((read.contents[0] as { blob: string }).blob, audio.data);
     assert.equal(Buffer.from(audio.data, "base64").subarray(0, 4).toString(), "RIFF");
     assert.equal(JSON.stringify(result).includes("never-return-this-cookie"), false);
+    const fileResult = await host.callTool({ name: "netease_audio_file", arguments: { songId: "123", durationSeconds: 5 } });
+    assert.equal(fileResult.isError, undefined);
+    assert.equal(fileResult.structuredContent, undefined);
+    const files = fileResult.content as Array<any>;
+    assert.deepEqual(files.map(block => block.type), ["resource", "resource_link"]);
+    assert.equal(files[0].resource.mimeType, "audio/wav");
+    assert.equal(files[1].mimeType, "audio/wav");
+    assert.equal(files[0].resource.uri, files[1].uri);
+    assert.equal(Buffer.from(files[0].resource.blob, "base64").subarray(0, 4).toString(), "RIFF");
+    const fileRead = await host.readResource({ uri: files[1].uri });
+    assert.equal((fileRead.contents[0] as { blob: string }).blob, files[0].resource.blob);
+    assert.equal(JSON.stringify(fileResult).includes("never-return-this-cookie"), false);
+
   } finally {
     globalThis.fetch = previousFetch;
     sdk.song_url_v1 = previousApi;
