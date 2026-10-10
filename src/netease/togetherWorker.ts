@@ -194,6 +194,51 @@ export class TogetherWorker {
     return await this.controlPlayback("GOTO", targetSongId);
   }
 
+  // Direct requests preserve queue order and mode; never retry playback automatically.
+  async playSong(songId: string): Promise<PlaybackControlResult> {
+    const target = songId.trim();
+    if (!/^\d+$/.test(target)) throw new Error("NetEase target songId must be numeric.");
+    if (!this.roomId) throw new Error("NetEase Listen Together is not currently in a room.");
+    if (this.queueMutationPending) throw new Error("NetEase queue mutation already pending.");
+    this.queueMutationPending = true;
+    const roomId = this.roomId;
+    try {
+      const playlist = await this.client.getTogetherPlaylist(roomId);
+      if (!playlist.displayList.includes(target)) {
+        if (!["ORDER_LOOP", "RANDOM", "SINGLE_LOOP"].includes(playlist.playMode ?? "")) {
+          throw new Error("Unsupported Together mode for direct song insertion.");
+        }
+        const accountId = this.status.accountId;
+        if (!accountId) throw new Error("NetEase account identity is unavailable.");
+        if (this.roomId !== roomId) throw new Error("Together room changed before insertion.");
+        const version = (playlist.versions.find(v => v.userId === accountId)?.version ?? 0) + 1;
+        const displayList = [...playlist.displayList, target];
+        const randomList = playlist.randomList.includes(target)
+          ? [...playlist.randomList] : [...playlist.randomList, target];
+        await this.client.replaceTogetherPlaylist({ roomId, userId: accountId, version, displayList, randomList });
+        const deadline = Date.now() + (this.options.playbackControlTimeoutMs ?? 8_000);
+        let verified = false;
+        while (Date.now() < deadline) {
+          await sleep(250);
+          if (this.roomId !== roomId) throw new Error("Together room changed after insertion; playback not sent.");
+          const confirmed = await this.client.getTogetherPlaylist(roomId);
+          if (confirmed.playMode !== playlist.playMode) throw new Error("Together mode changed during insertion; playback not sent.");
+          if (confirmed.displayList.includes(target) && confirmed.randomList.includes(target)
+            && (confirmed.versions.find(v => v.userId === accountId)?.version ?? 0) >= version) {
+            verified = true;
+            break;
+          }
+        }
+        if (!verified) throw new Error("Song insertion was not confirmed; playback not sent. Song may already be queued.");
+      }
+      if (this.roomId !== roomId) throw new Error("Together room changed; playback not sent.");
+      // Existing membership validation and authoritative NIM confirmation remain required.
+      return await this.gotoPlayback(target);
+    } finally {
+      this.queueMutationPending = false;
+    }
+  }
+
   async nextPlayback(): Promise<PlaybackControlResult> {
     if (!this.roomId) throw new Error("NetEase Listen Together is not currently in a room.");
     const currentSongId = this.latestPlaying?.songId ?? this.status.currentSong?.id ?? null;

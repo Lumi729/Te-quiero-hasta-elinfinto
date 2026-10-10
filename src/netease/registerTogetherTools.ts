@@ -201,6 +201,17 @@ export function registerNeteaseTogetherTools(
     },
   );
 
+  server.registerTool("netease_together_play_song", {
+    title: "Play a requested NetEase Together song",
+    description: "Play a numeric songId from the beginning. If absent, append to display and random queues while preserving existing order and playback mode, verify membership and queue version, then require NIM playback confirmation. Supports insertion in ORDER_LOOP, RANDOM and SINGLE_LOOP; do not change modes manually. A failed confirmation may leave the song queued: inspect state before retrying. Experimental until verified on the user's device.",
+    inputSchema: { songId: z.string().trim().regex(/^\d+$/) },
+    outputSchema: playbackControlOutputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false },
+  }, async ({ songId }) => {
+    const result = await togetherWorker.playSong(songId);
+    return { structuredContent: result, content: [{ type: "text", text: JSON.stringify(result) }] };
+  });
+
   server.registerTool(
     "netease_together_goto",
     {

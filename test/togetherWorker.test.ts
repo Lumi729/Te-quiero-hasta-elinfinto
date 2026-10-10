@@ -1066,3 +1066,61 @@ test("leaveTogether is a confirmed no-op when authoritative status is already ou
   assert.equal(result.roomId, null);
   assert.equal(worker.getStatus().phase, "waiting_invite");
 });
+
+test("direct song insertion preserves RANDOM order, verifies queue before playback, and avoids reinsertion", async () => {
+  const worker = new TogetherWorker({ cookie: "", enabled: false, playbackControlTimeoutMs: 1000, onEvent: () => {} });
+  const internals = worker as any;
+  internals.roomId = "room";
+  internals.status.accountId = "account";
+  let queue = { displayList: ["11", "22"], randomList: ["22", "11"], playMode: "RANDOM", versions: [{ userId: "account", version: 2 }] };
+  let writes = 0;
+  internals.client.getTogetherPlaylist = async () => queue;
+  internals.client.replaceTogetherPlaylist = async (input: any) => {
+    writes++;
+    assert.deepEqual(input.displayList, ["11", "22", "33"]);
+    assert.deepEqual(input.randomList, ["22", "11", "33"]);
+    assert.equal(input.playMode, undefined);
+    queue = { ...queue, displayList: input.displayList, randomList: input.randomList, versions: [{ userId: "account", version: input.version }] };
+  };
+  const confirmed = { ok: true, confirmed: true, songId: "33" };
+  internals.controlPlayback = async (command: string, songId: string) => {
+    assert.equal(command, "GOTO");
+    assert.equal(songId, "33");
+    assert.equal(queue.versions[0].version, 3);
+    return confirmed;
+  };
+  assert.equal(await worker.playSong("33"), confirmed);
+  assert.equal(await worker.playSong("33"), confirmed);
+  assert.equal(writes, 1);
+  assert.equal(queue.playMode, "RANDOM");
+});
+
+test("direct song unconfirmed queue never starts playback and releases mutation guard", async () => {
+  const worker = new TogetherWorker({ cookie: "", enabled: false, playbackControlTimeoutMs: 1, onEvent: () => {} });
+  const internals = worker as any;
+  internals.roomId = "room";
+  internals.status.accountId = "account";
+  internals.client.getTogetherPlaylist = async () => ({ displayList: ["11"], randomList: ["11"], playMode: "RANDOM", versions: [] });
+  internals.client.replaceTogetherPlaylist = async () => {};
+  internals.controlPlayback = async () => assert.fail("must not play without queue confirmation");
+  await assert.rejects(worker.playSong("33"), /not confirmed/);
+  assert.equal(internals.queueMutationPending, false);
+});
+
+test("direct song stops on room or mode changes during queue confirmation", async () => {
+  for (const change of ["room", "mode"]) {
+    const worker = new TogetherWorker({ cookie: "", enabled: false, playbackControlTimeoutMs: 1000, onEvent: () => {} });
+    const internals = worker as any;
+    internals.roomId = "room";
+    internals.status.accountId = "account";
+    let mode = "RANDOM";
+    internals.client.getTogetherPlaylist = async () => ({ displayList: ["11"], randomList: ["11"], playMode: mode, versions: [] });
+    internals.client.replaceTogetherPlaylist = async () => {
+      if (change === "room") internals.roomId = "another-room";
+      else mode = "ORDER_LOOP";
+    };
+    internals.controlPlayback = async () => assert.fail("must not play in changed context");
+    await assert.rejects(worker.playSong("33"), /changed/);
+    assert.equal(internals.queueMutationPending, false);
+  }
+});
