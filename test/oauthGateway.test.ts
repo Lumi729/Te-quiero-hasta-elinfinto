@@ -56,6 +56,7 @@ async function authorize(base: string, clientId: string, callback: string, resou
   const page = await fetch(base + "/oauth/authorize?" + query);
   assert.equal(page.status, 200);
   assert.equal(page.headers.get("referrer-policy"), "same-origin", "approve button posts a real Origin");
+  assert.match(page.headers.get("content-security-policy")!, new RegExp("form-action 'self' " + new URL(callback).origin + ";"), "redirect to the callback is not blocked by the browser");
   const html = await page.text();
   const requestId = /name="request_id" value="([^"]+)"/.exec(html)![1];
   const wrong = await fetch(base + "/oauth/authorize", form({ request_id: requestId, password: "nope" }));
