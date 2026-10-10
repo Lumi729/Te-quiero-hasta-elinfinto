@@ -13,3 +13,4 @@ dist/
 *.pem
 *.mp3
 *.wav
+.oauth-clients.json
