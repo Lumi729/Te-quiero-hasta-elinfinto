@@ -1,3 +1,4 @@
+import { serveAudioResource } from "./netease/audioResources.js";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -72,6 +73,8 @@ export function createHttpServer() {
       return;
     }
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+
+    if (serveAudioResource(req, res, url)) return;
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {

@@ -6,7 +6,8 @@
 
 新增 `netease_audio_clip`，同时出现在 `/mcp` 和 `/mcp/music`。
 它用服务端已登录的网易云账号获取标准音质可播放音源，截取短片段，
-返回 MCP 标准 `audio` 内容（WAV，单声道，16 kHz）。不会改变手机播放。
+返回 MCP 标准 `audio` 内容（WAV，单声道，16 kHz），同时返回指向相同 WAV 的
+`resource_link`。宿主可通过 MCP `resources/read` 或 HTTPS 下载读取。不会改变手机播放。
 不需要 OpenAI API Key，也不另开一个模型。
 
 - 不传 songId：取调用时的一起听歌曲，默认截取当前进度之前的 15 秒；歌曲刚开始则从开头取。
@@ -59,6 +60,42 @@ NETEASE_COOKIE_FILE=/root/cove-resonance/.netease-cookie bash scripts/start-pers
 不要同时运行两套音乐服务或两个 NIM 登录。
 若出现 EADDRINUSE，先确认旧音乐服务是否仍在运行，不要批量结束 Termux 进程。
 
+## 已安装第一版音频功能：升级双通道
+
+在运行音乐服务的 Ubuntu 窗口按 Ctrl+C，再执行：
+
+```bash
+cd /root/qianqian-music &&
+git pull --ff-only &&
+npm run build &&
+python3 scripts/enable-audio-resource-route.py &&
+NETEASE_COOKIE_FILE=/root/cove-resonance/.netease-cookie bash scripts/start-personal.sh
+```
+
+补丁仅适配此前安装的 `/root/cove-access/oauth-gateway.cjs`。它检查代码特征，
+先备份并校验语法，然后允许 GET / HEAD 访问严格匹配的随机音频路径。
+版本不匹配时停止，不覆盖文件；重复运行不会重复修改。保留原密钥和 OAuth 设置。
+
+再到授权服务窗口按 Ctrl+C，重新执行：
+
+```bash
+proot-distro login cove -- node /root/cove-access/oauth-gateway.cjs
+```
+
+上面这一行在原生 Termux `$` 执行；如在 Ubuntu 内，则直接用
+`node /root/cove-access/oauth-gateway.cjs`。Cloudflare 隧道继续运行。
+授权服务重启会使内存中的 OAuth token 失效，需要在 ChatGPT 按提示重新连接。
+然后刷新插件工具列表，重新调用音频工具，旧片段链接不会保留。
+
+每次返回的链接相当于该片段的临时访问凭据：知道链接的人在五分钟内可以下载，
+不要公开分享。文件仅存内存，过期或音乐服务重启即失效；不要求下载方携带网易云 Cookie
+或 OAuth token。没有目录列表，未知/过期链接返回 404，不输出请求路径日志。
+最多保留八个片段，达到上限时继续返回 AudioContent，并标记 resourceUnavailable=true，
+不提前撤销尚在有效期内的链接。
+
+若需撤销网关改动，停止授权服务，使用补丁打印对应时间的
+`oauth-gateway.cjs.before-audio-*` 备份恢复原文件，再重启。
+
 ## 怎么测
 
 重启后，在 ChatGPT 插件管理中刷新工具列表（如界面没有刷新入口，重新连接），
@@ -98,5 +135,6 @@ npm start
 单次最多下载 16 MiB，单片段最多 30 秒；整个调用限时 55 秒；同进程只处理一个音频请求。
 只接受账号 API 给出的网易云媒体域名，强制 HTTPS，逐跳验证重定向，不转发 Cookie。
 FFmpeg 只处理临时本地文件，限制输入格式和协议；结束后删除临时文件。
-音频以工具结果返回，没有增加公开下载路由、公开 Cookie 或外部音频服务。
+音频以工具结果和短期文件资源返回；新增的下载路由仅允许随机访问码对应的片段。
+不公开 Cookie，不调用外部音频分析服务。
 现有公网 MCP 必须继续经过已配置的 OAuth 网关。

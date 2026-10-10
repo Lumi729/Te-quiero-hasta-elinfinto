@@ -152,6 +152,8 @@ test("MCP tools/call delivers a decodable audio block through the SDK", async ()
     sdk.song_url_v1 = async () => ({ body: { code: 200, data: [{ id: 123, code: 200, url: clientUrl() }] } });
     globalThis.fetch = async () => new Response(new Uint8Array(tone));
     registerNeteaseAudioTools(server, new NeteaseClient("never-return-this-cookie"), state);
+    const { registerAudioResources } = await import("../src/netease/audioResources.js");
+    registerAudioResources(server);
     await server.connect(a);
     await host.connect(b);
     const result = await host.callTool({ name: "netease_audio_clip", arguments: { songId: "123", durationSeconds: 5 } });
@@ -159,6 +161,10 @@ test("MCP tools/call delivers a decodable audio block through the SDK", async ()
     const blocks = result.content as Array<{ type: string; data?: string }>;
     const audio = blocks.find((block) => block.type === "audio");
     assert.ok(audio?.data);
+    const link = (result.content as Array<{ type: string; uri?: string }>).find(block => block.type === "resource_link");
+    assert.ok(link?.uri);
+    const read = await host.readResource({ uri: link.uri });
+    assert.equal((read.contents[0] as { blob: string }).blob, audio.data);
     assert.equal(Buffer.from(audio.data, "base64").subarray(0, 4).toString(), "RIFF");
     assert.equal(JSON.stringify(result).includes("never-return-this-cookie"), false);
   } finally {

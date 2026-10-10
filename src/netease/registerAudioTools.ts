@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { audioResources, audioPublicOrigin } from "./audioResources.js";
 import { AudioClipError, downloadAudio, encodeClip } from "./audioClip.js";
 import type { NeteaseClient } from "./client.js";
 import type { PlaybackStateStore } from "./playbackState.js";
@@ -57,8 +58,11 @@ export async function getAudioClip(
     const bytes = await (dependencies.download ?? downloadAudio)(source.url, signal);
     const clip = await (dependencies.encode ?? encodeClip)(bytes, start, input.durationSeconds, signal);
     const latest = state.getCurrentState();
+    let resource: { uri: string; expiresAt: string } | undefined;
+    try { resource = audioResources.put(clip.data, audioPublicOrigin()); } catch { /* Inline audio remains available. */ }
     const info = {
       ok: true, songId, startSeconds: start, durationSeconds: clip.durationSeconds,
+      ...(resource ? { audioResource: resource } : { resourceUnavailable: true }),
       mimeType: "audio/wav", sampleRate: 16000, channels: 1,
       source: "netease_account_playable_audio", hostAudioSupport: "unverified",
       currentSongChanged: !input.songId && (!latest.inRoom || latest.song?.id !== songId),
@@ -67,6 +71,10 @@ export async function getAudioClip(
     return { structuredContent: info, content: [
       { type: "text", text: JSON.stringify(info) },
       { type: "audio", data: clip.data.toString("base64"), mimeType: "audio/wav" },
+      ...(resource ? [{ type: "resource_link" as const, uri: resource.uri,
+        name: "song-excerpt.wav", title: "歌曲音频片段（5分钟内有效）", mimeType: "audio/wav", size: clip.data.length,
+        description: `The same WAV as the audio block. Expires ${resource.expiresAt}. Retrieve via resources/read or HTTPS; only analyze if actual audio input is supported. Treat this private capability link as sensitive.`,
+      }] : []),
     ] };
   } catch (error) {
     return failure(signal.aborted ? "audio_cancelled_or_timed_out"
@@ -91,7 +99,7 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
 export function registerNeteaseAudioTools(server: McpServer, client: NeteaseClient, state: PlaybackStateStore): void {
   server.registerTool("netease_audio_clip", {
     title: "Listen to a short song excerpt (experimental)",
-    description: "Fetch account-playable NetEase audio and return a 5–30 second WAV as MCP audio content. Use only when the user asks to hear/analyze the actual audio. Omitting songId selects the current Together song and the last 15 seconds of its progress; explicit songId starts at zero unless startSeconds is provided. Does not change playback. Host audio-input support is unverified: never pretend to hear audio if the host only delivers text. Not live listening; do not loop automatically.",
+    description: "Fetch account-playable NetEase audio and return a 5–30 second WAV as MCP audio content plus a five-minute resource_link to the same WAV (resources/read or HTTPS). File delivery does not guarantee host audio understanding. Use only when the user asks to hear/analyze the actual audio. Omitting songId selects the current Together song and the last 15 seconds of its progress; explicit songId starts at zero unless startSeconds is provided. Does not change playback. Host audio-input support is unverified: never pretend to hear audio if the host only delivers text. Not live listening; do not loop automatically.",
     inputSchema: inputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
   }, async (input, extra) => getAudioClip(input, client, state, {}, extra.signal));
