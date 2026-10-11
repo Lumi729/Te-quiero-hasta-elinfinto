@@ -18,10 +18,12 @@ test("two-person rooms keep the FRIEND chat format", () => {
 });
 
 test("multi-person rooms send AI chat with the room's own ltType and room-level fields", () => {
-  const format = learnRoomMessageFormat(incoming("MULTI", "room-3", 0, { partyType: 2, sceneId: "s1" }), "room-3", 1);
-  assert.deepEqual(format, { ltType: "MULTI", extra: { partyType: 2, sceneId: "s1" }, learnedFrom: "text", learnedAtMs: 1 });
-  const ext = clientExtOf(buildRealtimeChatTextMessage("我也在", "room-3", "11111111-2222-3333-4444-555555555555", undefined, format));
-  assert.equal(ext.ltType, "MULTI");
+  // Shape observed in the owner's real three-person room (values replaced).
+  const format = learnRoomMessageFormat(incoming("MULTI_MATCH_SONG", "room-3", 0, { partyType: 2, syncSource: "", clientSessionId: "owner-phone-session" }), "room-3", 1);
+  assert.deepEqual(format, { ltType: "MULTI_MATCH_SONG", extra: { partyType: 2, syncSource: "" }, learnedFrom: "text", learnedAtMs: 1, usesClientSession: true });
+  const ext = clientExtOf(buildRealtimeChatTextMessage("我也在", "room-3", "11111111-2222-3333-4444-555555555555", undefined, format, "ai-own-session"));
+  assert.equal(ext.clientSessionId, "ai-own-session", "AI uses its own device session, never the owner's");
+  assert.equal(ext.ltType, "MULTI_MATCH_SONG");
   assert.equal(ext.partyType, 2);
   assert.equal(ext.roomId, "room-3", "room id is our own, not copied");
   assert.equal(ext.clientMsgId, "11111111-2222-3333-4444-555555555555");

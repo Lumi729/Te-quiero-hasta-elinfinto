@@ -61,6 +61,8 @@ export type RoomMessageFormat = {
   extra: Record<string, string | number | boolean>;
   learnedFrom: "text" | "custom" | "playback" | "other";
   learnedAtMs: number;
+  /** The room's messages carry a device session id; we then send our own, never someone else's. */
+  usesClientSession?: boolean;
 };
 
 export type RealtimeChatSendResult = {
@@ -354,7 +356,8 @@ function chatMessageCategory(msgType: number | null): RealtimeChatRoomMessage["c
 }
 
 // clientExt keys that describe one message or one sender, never copied from someone else's message.
-const PER_MESSAGE_EXT_KEYS = new Set(["clientMsgId", "msgId", "roomId", "userId", "uid", "nickname", "nick", "avatar", "avatarUrl", "text", "content", "msg", "at", "atList", "atUsers", "time", "timestamp"]);
+// clientSessionId identifies the sending device: copying the owner's would make their phone treat AI chat as its own echo.
+const PER_MESSAGE_EXT_KEYS = new Set(["clientSessionId", "clientMsgId", "msgId", "roomId", "userId", "uid", "nickname", "nick", "avatar", "avatarUrl", "text", "content", "msg", "at", "atList", "atUsers", "time", "timestamp"]);
 
 function listenTogetherExt(raw: unknown): { top: Record<string, unknown>; client: Record<string, unknown> } | null {
   const message = asRecord(raw);
@@ -379,7 +382,8 @@ export function learnRoomMessageFormat(raw: unknown, roomId: string, receivedAtM
   }
   const msgType = readNumber(asRecord(raw).msg_type_);
   const learnedFrom = findPlaybackEnvelope(raw) ? "playback" : msgType === 0 ? "text" : msgType === 100 ? "custom" : "other";
-  return { ltType, extra, learnedFrom, learnedAtMs: receivedAtMs };
+  const usesClientSession = typeof found.client.clientSessionId === "string";
+  return { ltType, extra, learnedFrom, learnedAtMs: receivedAtMs, ...(usesClientSession ? { usesClientSession } : {}) };
 }
 
 /** Masked structure of a chat message for TOGETHER_CHAT_DIAGNOSTICS: no text, nick, avatar or full ids. */
@@ -414,7 +418,8 @@ export function buildRealtimeChatTextMessage(
   roomId: string,
   messageId: string = randomUUID(),
   senderProfile?: RealtimeMemberProfile,
-  roomFormat?: Pick<RoomMessageFormat, "ltType" | "extra"> | null,
+  roomFormat?: Pick<RoomMessageFormat, "ltType" | "extra" | "usesClientSession"> | null,
+  clientSessionId?: string,
 ): Record<string, unknown> {
   const normalized = text.trim();
   if (!normalized) throw new Error("ChatRoom message cannot be empty");
@@ -443,6 +448,7 @@ export function buildRealtimeChatTextMessage(
       bizType: "listenTogether",
       // Two-person rooms are FRIEND; multi-person rooms use another type the official client reveals.
       ltType: roomFormat?.ltType ?? "FRIEND",
+      ...(roomFormat?.usesClientSession && clientSessionId ? { clientSessionId } : {}),
       roomId,
       clientMsgId: messageId,
     },
@@ -523,6 +529,8 @@ export class NeteaseRealtimeTransport {
   private connecting: Promise<void> | null = null;
   private pendingEnter: PendingEnter | null = null;
   private activeMemberProfile: RealtimeMemberProfile | null = null;
+  // This service's own device session id for multi-person room chat (stable for the process).
+  private readonly clientSessionId = randomUUID();
   private generation = 0;
   private status: RealtimeTransportStatus;
 
@@ -967,7 +975,7 @@ export class NeteaseRealtimeTransport {
     }
 
     const messageId = randomUUID();
-    const msg = buildRealtimeChatTextMessage(text, roomId, messageId, this.activeMemberProfile ?? undefined, this.status.roomMessageFormat);
+    const msg = buildRealtimeChatTextMessage(text, roomId, messageId, this.activeMemberProfile ?? undefined, this.status.roomMessageFormat, this.clientSessionId);
     if (/^(1|true|on|yes)$/i.test(process.env.TOGETHER_CHAT_DIAGNOSTICS?.trim() ?? "")) {
       console.log(`NetEase chat diagnostic: ${JSON.stringify(describeChatMessageFormat(msg, "out"))}`);
     }
