@@ -26,7 +26,27 @@
    ```
    第一次如果提示先登录 Cloudflare，按提示运行 `cloudflared tunnel login`，再运行上面那行。
 
-## 每次启动（新开两个窗口）
+## 一条命令全部打开（推荐）
+
+第一次在原生 Termux 里拿一下启动器：
+
+```bash
+proot-distro login cove -- cat /root/cove-claude/ops/phone-claude/cove.sh > ~/cove.sh
+```
+
+以后：
+
+| 做什么 | 命令 |
+| --- | --- |
+| 两份全部打开 | `bash ~/cove.sh` |
+| 只开 ChatGPT / 只开 Claude | `bash ~/cove.sh chatgpt` / `bash ~/cove.sh claude` |
+| 看运行状态 | `bash ~/cove.sh status` |
+| 看各个窗口的输出 | `bash ~/cove.sh look`（Ctrl+B 再按 n 切换，Ctrl+B 再按 d 退出查看） |
+| 全部停止 / 只停一份 | `bash ~/cove.sh stop` / `bash ~/cove.sh stop claude` |
+
+每个服务在 tmux 里有自己的窗口，关掉 Termux 界面也继续运行；启动时会自动申请 wakelock。
+
+## 手动启动（新开两个窗口）
 
 - Ubuntu：`bash /root/cove-claude/ops/phone-claude/start.sh`（一起听 + 授权服务，Ctrl+C 一起停）
 - 原生 Termux：`bash ~/cove-claude-tunnel.sh`
