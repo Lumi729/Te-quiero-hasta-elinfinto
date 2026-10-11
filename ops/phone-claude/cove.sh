@@ -11,6 +11,19 @@
 set -uo pipefail
 S=cove
 in_ubuntu() { echo "proot-distro login cove -- bash -c '$1'"; }
+# Kit mode (a fresh install from ops/phone-kit, e.g. a friend's phone): ~/.cove-kit holds the two domains.
+# Without it this is Lumi's original layout below.
+DOMAIN_GPT=cove.lumi.org.cn DOMAIN_CLAUDE=gege.lumi.org.cn CONF_GPT=cove-music.yml CONF_CLAUDE=cove-claude.yml
+CLAUDE_TUNNEL_SCRIPT="$HOME/cove-claude-tunnel.sh"
+if [ -f "$HOME/.cove-kit" ]; then
+  . "$HOME/.cove-kit" # GPT_DOMAIN=… CLAUDE_DOMAIN=… (no secrets)
+  DOMAIN_GPT=$GPT_DOMAIN DOMAIN_CLAUDE=$CLAUDE_DOMAIN CONF_GPT=cove-gpt.yml CLAUDE_TUNNEL_SCRIPT="$HOME/cove-kit-tunnel.sh"
+  kit() { echo "proot-distro login cove -- bash /root/cove-app/ops/phone-kit/kit.sh $*"; }
+  declare -A CMD=(
+    [gpt-music]="$(kit start gpt music)" [gpt-oauth]="$(kit start gpt oauth)" [gpt-tunnel]="bash \$HOME/cove-kit-tunnel.sh gpt"
+    [claude-music]="$(kit start claude music)" [claude-oauth]="$(kit start claude oauth)" [claude-tunnel]="bash \$HOME/cove-kit-tunnel.sh claude"
+  )
+else
 declare -A CMD=(
   # Both instances serve the same owner: the ChatGPT one reuses the UID entered for the Claude one,
   # so in a three-person room it never mistakes the other AI for the owner.
@@ -21,6 +34,7 @@ declare -A CMD=(
   [claude-oauth]="$(in_ubuntu 'bash /root/cove-claude/ops/phone-claude/start.sh oauth')"
   [claude-tunnel]="bash \$HOME/cove-claude-tunnel.sh"
 )
+fi
 GROUP_chatgpt="gpt-music gpt-oauth gpt-tunnel"
 GROUP_claude="claude-music claude-oauth claude-tunnel"
 names() { case "${1:-all}" in chatgpt) echo "$GROUP_chatgpt";; claude) echo "$GROUP_claude";; all) echo "$GROUP_chatgpt $GROUP_claude";;
@@ -54,12 +68,12 @@ case "${1:-start}" in
       if grep -q "\"resource\":\"https://$d/mcp/music\"" <<<"$meta"; then echo "  登录信息地址 ✓"; else echo "  登录信息地址 ✗：$(head -c 120 <<<"$meta")"; fi
     }
     for n in gpt-music gpt-oauth gpt-tunnel claude-music claude-oauth claude-tunnel; do running "$n" || echo "窗口 $n 没开 ✗"; done
-    echo "== Claude 那份（gege.lumi.org.cn）"
-    echo "  本机 8797：$(up 8797)   本机 8798：$(up 8798)"; pub gege.lumi.org.cn
-    echo "  同时在跑的 Claude 隧道：$(tunnels cove-claude.yml) 个（应为 1）"
-    echo "== ChatGPT 那份（cove.lumi.org.cn）"
-    echo "  本机 8787：$(up 8787)   本机 8788：$(up 8788)"; pub cove.lumi.org.cn
-    echo "  同时在跑的 ChatGPT 隧道：$(tunnels cove-music.yml) 个（应为 1）"
+    echo "== Claude 那份（$DOMAIN_CLAUDE）"
+    echo "  本机 8797：$(up 8797)   本机 8798：$(up 8798)"; pub "$DOMAIN_CLAUDE"
+    echo "  同时在跑的 Claude 隧道：$(tunnels "$CONF_CLAUDE") 个（应为 1）"
+    echo "== ChatGPT 那份（$DOMAIN_GPT）"
+    echo "  本机 8787：$(up 8787)   本机 8788：$(up 8788)"; pub "$DOMAIN_GPT"
+    echo "  同时在跑的 ChatGPT 隧道：$(tunnels "$CONF_GPT") 个（应为 1）"
     echo "== 各窗口最后几行（已遮住 Cookie / token）"
     for n in claude-music claude-oauth claude-tunnel gpt-tunnel; do
       running "$n" || continue
@@ -87,7 +101,7 @@ case "${1:-start}" in
     exec bash "$0" start;;
   start|all|chatgpt|claude)
     group=$([ "${1:-start}" = start ] && echo all || echo "$1")
-    [ "$group" != chatgpt ] && [ ! -f "$HOME/cove-claude-tunnel.sh" ] && { echo 'Claude 隧道还没建：先按说明运行一次 cove-claude-tunnel.sh'; exit 1; }
+    [ "$group" != chatgpt ] && [ ! -f "$CLAUDE_TUNNEL_SCRIPT" ] && { echo 'Claude 隧道还没建：先按说明建好隧道'; exit 1; }
     termux-wake-lock 2>/dev/null || true
     tmux has-session -t "$S" 2>/dev/null || tmux new-session -d -s "$S" -n home
     for n in $(names "$group"); do
