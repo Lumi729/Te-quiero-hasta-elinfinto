@@ -98,6 +98,8 @@ export class TogetherWorker {
   private errorStreak = 0;
   private accountProfile: AccountProfile | null = null;
   private currentLyricsModelContext: string | null = null;
+  // Full lyrics go to the model once per song; later events of the same song carry a short pointer.
+  private lyricsSentForSongId: string | null = null;
   private status: TogetherWorkerStatus;
 
   constructor(private readonly options: TogetherWorkerOptions) {
@@ -819,6 +821,7 @@ export class TogetherWorker {
       const song = await this.client.getSongDetails(playing.songId);
       this.previousSongId = playing.songId;
       this.currentLyricsModelContext = null;
+      this.lyricsSentForSongId = null;
       this.status.currentSong = song;
       this.updateState((sink) => sink.updateSong(song));
       const lyricsContext = await this.loadLyrics(song);
@@ -830,7 +833,7 @@ export class TogetherWorker {
         this.options.onEvent(
           "netease.music_changed",
           `${prefix}《${song.name}》— ${song.artist}。请结合我们的对话自然回应；如果没必要点评，也可以只安静陪听。`,
-          lyricsContext,
+          lyricsContext ? this.lyricsForEvent() : undefined,
         );
         this.joinedPending = false;
       }
@@ -839,7 +842,7 @@ export class TogetherWorker {
         this.options.onEvent(
           "netease.playback",
           "一起听暂停了。",
-          this.currentLyricsModelContext ?? undefined,
+          this.lyricsForEvent(),
         );
       } else if (playing.playStatus === "PLAY") {
         const song = this.status.currentSong;
@@ -848,7 +851,7 @@ export class TogetherWorker {
           song
             ? `一起听继续播放：《${song.name}》— ${song.artist}。`
             : "一起听继续播放了。",
-          this.currentLyricsModelContext ?? undefined,
+          this.lyricsForEvent(),
         );
         this.joinedPending = false;
       }
@@ -883,7 +886,7 @@ export class TogetherWorker {
     const owner = this.options.inviterUid ?? this.roomInviterId;
     if (!owner || message.senderId === owner) {
       this.peerMessagesSinceOwner = 0;
-      this.options.onEvent("netease.chatroom", message.text, this.currentLyricsModelContext ?? undefined,
+      this.options.onEvent("netease.chatroom", message.text, this.lyricsForEvent(),
         this.roomId && message.senderId ? JSON.stringify([this.roomId, message.senderId]) : undefined);
       return;
     }
@@ -894,7 +897,25 @@ export class TogetherWorker {
       return;
     }
     const nick = message.senderNick?.trim() || "房间里的另一位";
-    this.options.onEvent("netease.chatroom.peer", `${nick}：${message.text}`, this.currentLyricsModelContext ?? undefined);
+    this.options.onEvent("netease.chatroom.peer", `${nick}：${message.text}`, this.lyricsForEvent());
+  }
+
+  /** Full lyrics the first time per song (normally with the song change), then only a short pointer. */
+  private lyricsForEvent(): string | undefined {
+    const full = this.currentLyricsModelContext;
+    const songId = this.previousSongId;
+    if (!full || !songId) return undefined;
+    if (this.lyricsSentForSongId !== songId) {
+      this.lyricsSentForSongId = songId;
+      return full;
+    }
+    const song = this.status.currentSong;
+    return [
+      "NETEASE LYRICS NOTE",
+      `songId=${songId}${song ? ` songName=${song.name} artist=${song.artist}` : ""}`,
+      "The full lyrics of this song were already provided with an earlier event for this song and are not repeated here.",
+      "For the lines near the current position call netease_together_now.",
+    ].join("\n");
   }
 
   private async loadLyrics(song: SongDetails): Promise<string | undefined> {

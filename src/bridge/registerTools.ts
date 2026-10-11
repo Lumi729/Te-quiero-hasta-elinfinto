@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { sweepStale } from "./stale.js";
 import { listenerWakeHub } from "../listenerWake.js";
 import type { TogetherWorker } from "../netease/togetherWorker.js";
 import type { InMemoryEventQueue } from "../queue.js";
@@ -139,6 +140,8 @@ export function registerBridgeTools(
       _meta: { ui: { visibility: ["app"] } },
     },
     async () => {
+      // Widget path: skip stale events the same way; the summary is reported by the next long-wait.
+      sweepStale(queue, eventFilter, "widget");
       const outstanding = queue.getOutstandingRequiredReplyEvent(eventFilter);
       if (outstanding) {
         return {

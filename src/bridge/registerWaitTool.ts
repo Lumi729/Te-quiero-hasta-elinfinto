@@ -2,6 +2,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { InMemoryEventQueue } from "../queue.js";
 import type { BridgeEvent } from "../types.js";
+import { describeStale, sweepStale } from "./stale.js";
+
+type WaitResult = { structuredContent: Record<string, unknown>; content: Array<{ type: "text"; text: string }> };
+
+/** Report stale events skipped since the last wait, once, on whatever this wait returns. */
+function withStaleSummary(queue: InMemoryEventQueue, result: WaitResult): WaitResult {
+  const summary = queue.takeStaleSummary();
+  if (!summary) return result;
+  const note = describeStale(summary);
+  return {
+    structuredContent: { ...result.structuredContent, skippedStale: { ...summary, note } },
+    content: [{ type: "text", text: note }, ...result.content],
+  };
+}
 
 const DEFAULT_TIMEOUT_SECONDS = 45;
 const POLL_INTERVAL_MS = 250;
@@ -57,6 +71,12 @@ export function registerBridgeWaitTool(
         replyPolicy: z.enum(["required", "optional"]).optional(),
         createdAt: z.string().optional(),
         batchEventIds: z.array(z.string()).optional(),
+        skippedStale: z.object({
+          count: z.number(),
+          oldestCreatedAt: z.string(),
+          newestCreatedAt: z.string(),
+          note: z.string(),
+        }).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -74,9 +94,12 @@ export function registerBridgeWaitTool(
           throw new Error("Cove Resonance long-wait request was cancelled.");
         }
 
+        // Messages older than BRIDGE_STALE_EVENT_SECONDS are skipped before anything is handed out;
+        // what remains older than a minute is then merged into one catch-up batch.
+        sweepStale(queue, eventFilter, "long-wait");
         const outstanding = queue.getOutstandingRequiredReplyEvent(eventFilter);
         if (outstanding) {
-          return {
+          return withStaleSummary(queue, {
             structuredContent: {
               hasEvent: false,
               timedOut: false,
@@ -89,7 +112,7 @@ export function registerBridgeWaitTool(
                 "Cove Resonance long-wait is paused because a required routed reply is still outstanding. " +
                 "Complete the current cove_bridge_reply before waiting for another event.",
             }],
-          };
+          });
         }
 
         const batch = queue.reserveBacklog(eventFilter);
@@ -100,7 +123,7 @@ export function registerBridgeWaitTool(
             throw new Error("Cove Resonance long-wait request was cancelled.");
           }
 
-          return {
+          return withStaleSummary(queue, {
             structuredContent: {
               hasEvent: true,
               timedOut: false,
@@ -129,12 +152,12 @@ export function registerBridgeWaitTool(
                 event.visibleText,
               ].join("\n"),
             }],
-          };
+          });
         }
 
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) {
-          return {
+          return withStaleSummary(queue, {
             structuredContent: {
               hasEvent: false,
               timedOut: true,
@@ -146,7 +169,7 @@ export function registerBridgeWaitTool(
                 "No Cove Resonance event arrived before the long-wait timeout. " +
                 "If the user explicitly asked to keep listening, cove_bridge_wait may be called again.",
             }],
-          };
+          });
         }
 
         await delay(Math.min(POLL_INTERVAL_MS, remainingMs), extra.signal);

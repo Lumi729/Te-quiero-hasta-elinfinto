@@ -12,12 +12,22 @@ type StreamCounts = {
   total: number;
 };
 
+export type StaleSkipSummary = { count: number; oldestCreatedAt: string; newestCreatedAt: string };
+
 export type QueueStatus = StreamCounts & {
   conversation: StreamCounts;
   state: StreamCounts;
 };
 
 const STATE_HISTORY_PER_KEY = 12;
+
+const minIso = (a: string, b: string) => (Date.parse(a) <= Date.parse(b) ? a : b);
+const maxIso = (a: string, b: string) => (Date.parse(a) >= Date.parse(b) ? a : b);
+function mergeSummary(summary: StaleSkipSummary | null, createdAt: string): StaleSkipSummary {
+  return summary
+    ? { count: summary.count + 1, oldestCreatedAt: minIso(summary.oldestCreatedAt, createdAt), newestCreatedAt: maxIso(summary.newestCreatedAt, createdAt) }
+    : { count: 1, oldestCreatedAt: createdAt, newestCreatedAt: createdAt };
+}
 
 function emptyCounts(): StreamCounts {
   return { pending: 0, reserved: 0, delivered: 0, total: 0 };
@@ -30,6 +40,47 @@ export class InMemoryEventQueue {
   // Originals remain intact. A long-wait catch-up batch shares one reply journal.
   private readonly replyBatches = new Map<string, string[]>();
   private readonly batchLeaders = new Map<string, string>();
+  // Events skipped as stale since a consumer last reported it (one consumer at a time).
+  private staleSkipped: StaleSkipSummary | null = null;
+
+  /**
+   * Pending conversation and state events older than staleMs are terminal: ACKed without being shown to
+   * the model, and a required reply is completed as skipped so it never holds backpressure.
+   * Reserved/delivered events and in-flight replies are left alone. Returns this sweep's summary.
+   */
+  expireStale(staleMs: number, filter?: (event: BridgeEvent) => boolean, nowMs = Date.now()): StaleSkipSummary | null {
+    if (!(staleMs > 0)) return null;
+    let swept: StaleSkipSummary | null = null;
+    for (const rows of [this.conversationRows, this.stateRows]) {
+      for (const row of rows.values()) {
+        if (row.status !== "pending" || row.reply) continue;
+        if (filter && !filter(row.event)) continue;
+        const created = Date.parse(row.event.createdAt);
+        if (!Number.isFinite(created) || nowMs - created <= staleMs) continue;
+        row.status = "delivered";
+        if (row.event.replyPolicy === "required") {
+          row.reply = { fingerprint: "__stale_skipped__", sentCount: 0, completed: true, inFlight: false, completedAt: new Date(nowMs).toISOString() };
+        }
+        swept = mergeSummary(swept, row.event.createdAt);
+      }
+    }
+    for (const [key, id] of this.statePendingByKey) if (this.stateRows.get(id)?.status !== "pending") this.statePendingByKey.delete(key);
+    if (swept) {
+      this.staleSkipped = this.staleSkipped
+        ? { count: this.staleSkipped.count + swept.count,
+            oldestCreatedAt: minIso(this.staleSkipped.oldestCreatedAt, swept.oldestCreatedAt),
+            newestCreatedAt: maxIso(this.staleSkipped.newestCreatedAt, swept.newestCreatedAt) }
+        : swept;
+    }
+    return swept;
+  }
+
+  /** The stale-skip summary not yet reported to a consumer; reading it clears it. */
+  takeStaleSummary(): StaleSkipSummary | null {
+    const summary = this.staleSkipped;
+    this.staleSkipped = null;
+    return summary;
+  }
 
   reserveBacklog(filter?: (event: BridgeEvent) => boolean, nowMs = Date.now()):
     (BridgeEvent & { batchEventIds: string[] }) | null {
