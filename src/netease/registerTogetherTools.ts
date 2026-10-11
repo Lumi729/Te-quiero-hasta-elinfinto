@@ -93,6 +93,10 @@ export function registerNeteaseTogetherTools(
           timetagMs: z.number().nullable(),
           receivedAtMs: z.number(),
         }).nullable(),
+        lastUnrecognizedEvent: z.object({
+          receivedAtMs: z.number(),
+          shape: z.array(z.string()),
+        }).nullable().optional(),
         lastError: z.string().nullable(),
       },
       annotations: {

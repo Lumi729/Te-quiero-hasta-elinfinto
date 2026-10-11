@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPlaybackDiagnostic, decodeRealtimePlaybackEvent, NeteaseRealtimeTransport } from "../src/netease/realtimeTransport.js";
+import { describeUnknownRoomEvent, buildPlaybackDiagnostic, decodeRealtimePlaybackEvent, NeteaseRealtimeTransport } from "../src/netease/realtimeTransport.js";
 
 test("decodes event_type=20000 config string playback event", () => {
   const event = decodeRealtimePlaybackEvent({
@@ -148,4 +148,25 @@ test("decodes playback clientSeq and senderId for outbound confirmation", () => 
   assert.equal(event?.senderId, "cove-account");
   assert.equal(event?.serverSeq, 123);
   assert.equal(event?.commandType, "PAUSE");
+});
+
+
+test("unknown room diagnostics expose structure, never string payloads or secrets", () => {
+  const shape = describeUnknownRoomEvent({
+    msg_type_: 100,
+    msg_attach_: JSON.stringify({
+      event_type: 30001,
+      payload: { playCommand: { songId: "secret-song", progressMs: 42 },
+        content: "private-chat", token: "secret-token", cookie: "secret-cookie" },
+    }),
+  });
+  assert.ok(shape.includes("$.msg_attach_.event_type:code=30001"));
+  assert.ok(shape.includes("$.msg_attach_.payload.playCommand.progressMs:number"));
+  assert.doesNotMatch(JSON.stringify(shape), /secret|private-chat|token|cookie/);
+  assert.equal(decodeRealtimePlaybackEvent({ event_type: 30001, commandType: "PLAY" }), null);
+});
+
+test("unknown event diagnostics bound nesting and collection size", () => {
+  assert.ok(describeUnknownRoomEvent({ data: Array(1000).fill({ content: { type: 1 } }) }).length <= 64);
+  assert.deepEqual(describeUnknownRoomEvent("private text"), []);
 });
