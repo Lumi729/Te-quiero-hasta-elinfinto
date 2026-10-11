@@ -3,6 +3,9 @@
 装好以后：你在网易云「一起听」里邀请两个 AI 的账号进房间，它们能看到你在聊天室发的话、知道在放什么歌和歌词，会在聊天室里回你，还能帮你切歌、点歌。两份服务完全独立，一份给 ChatGPT，一份给 Claude，都跑在你自己的手机上。
 
 > 全程大约 1 小时，大部分时间在等下载。遇到看不懂的提示，截图给帮你装的人看就好。
+>
+> 想让自己的 AI（Claude / ChatGPT）一步步带你装：把这个链接发给它，说「请按这份说明一步步带我安装」：
+> https://github.com/Lumi729/Te-quiero-hasta-elinfinto/blob/main/docs/AI_INSTALL_ASSISTANT.md
 
 ---
 
