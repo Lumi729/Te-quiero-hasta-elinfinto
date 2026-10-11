@@ -139,7 +139,41 @@ export class NeteaseApiError extends Error {
 }
 
 export class NeteaseClient {
+  private multiPlaybackRoom: string | null = null;
+  private multiHeartbeatDue = 0;
+
   constructor(private readonly cookie: string) {}
+
+  private assertPairPlayback(roomId: string): void {
+    if (this.multiPlaybackRoom === roomId) {
+      throw new Error("多人房间暂只支持读取播放状态；不能发送双人房间的播放或队列指令。");
+    }
+  }
+
+  private async multiRequest(operation: "status/get" | "heartbeat", data: JsonRecord): Promise<JsonRecord> {
+    return this.call("api", {
+      uri: `/api/listen/together/multi/match/${operation}`,
+      crypto: "eapi",
+      data,
+    });
+  }
+
+  private async getMultiPlaying(roomId: string): Promise<PlayingState | null> {
+    const body = await this.multiRequest("status/get", {});
+    const snapshot = asRecord(asRecord(body.data).multiLtRoomSnapshot);
+    if (readString(snapshot.roomId) !== roomId) return null;
+    this.multiPlaybackRoom = roomId;
+    const info = asRecord(snapshot.roomPlaySongInfo);
+    const songId = readString(asRecord(info.playSong).songId);
+    if (info.playSong === null) return { songId: null, playStatus: "UNKNOWN", progress: 0 };
+    const progress = readNumber(info.playedTime);
+    if (!songId || !/^\d+$/.test(songId) || progress === null || !Number.isFinite(progress) || progress < 0) {
+      throw new Error("多人房间返回了不完整的播放快照。");
+    }
+    // Multi-room playback is server-driven. Local app pause is not a room-wide pause.
+    // Its version is not comparable to the pair-room NIM serverSeq.
+    return { songId, playStatus: "PLAY", progress };
+  }
 
   private async call(operation: string, params: JsonRecord = {}): Promise<JsonRecord> {
     const fn = sdk[operation];
@@ -379,11 +413,21 @@ export class NeteaseClient {
   }
 
   async getPlaying(roomId: string): Promise<PlayingState> {
+    if (this.multiPlaybackRoom !== roomId) this.multiPlaybackRoom = null;
+    if (this.multiPlaybackRoom === roomId) {
+      const playing = await this.getMultiPlaying(roomId);
+      if (!playing) throw new Error("多人播放快照与当前房间不一致。");
+      return playing;
+    }
     const body = await this.call("listentogether_sync_playlist_get", { roomId });
     const data = asRecord(body.data);
     const command = asRecord(data.playCommand);
     const rawStatus = readString(command.playStatus)?.toUpperCase();
     const serverSeq = readNumber(command.serverSeq);
+    if (!readString(command.targetSongId) && rawStatus !== "PLAY" && rawStatus !== "PAUSE") {
+      const multi = await this.getMultiPlaying(roomId);
+      if (multi) return multi;
+    }
     return {
       songId: readString(command.targetSongId),
       playStatus: rawStatus === "PLAY" || rawStatus === "PAUSE" ? rawStatus : "UNKNOWN",
@@ -393,6 +437,7 @@ export class NeteaseClient {
   }
 
   async getTogetherPlaylist(roomId: string): Promise<TogetherPlaylistState> {
+    this.assertPairPlayback(roomId);
     const body = await this.call("listentogether_sync_playlist_get", { roomId });
     const playlist = asRecord(asRecord(body.data).playlist);
     const displayListRaw = asRecord(playlist.displayList).result;
@@ -425,6 +470,7 @@ export class NeteaseClient {
     displayList: string[];
     randomList: string[];
   }): Promise<void> {
+    this.assertPairPlayback(input.roomId);
     await this.call("listentogether_sync_list_command", {
       roomId: input.roomId,
       commandType: "REPLACE",
@@ -444,6 +490,7 @@ export class NeteaseClient {
     targetSongId: string;
     clientSeq: number;
   }): Promise<void> {
+    this.assertPairPlayback(input.roomId);
     await this.call("listentogether_play_command", {
       roomId: input.roomId,
       commandType: input.commandType,
@@ -508,6 +555,13 @@ export class NeteaseClient {
     isPlaying: boolean,
     progress: number,
   ): Promise<void> {
+    if (this.multiPlaybackRoom === roomId) {
+      if (Date.now() < this.multiHeartbeatDue) return;
+      const body = await this.multiRequest("heartbeat", { roomId });
+      const seconds = readNumber(asRecord(body.data).heartBeatDuration);
+      this.multiHeartbeatDue = Date.now() + (seconds !== null && seconds > 0 ? Math.max(1000, seconds * 1000) : 10000);
+      return;
+    }
     await this.call("listentogether_heatbeat", {
       roomId,
       songId: songId ?? "0",
