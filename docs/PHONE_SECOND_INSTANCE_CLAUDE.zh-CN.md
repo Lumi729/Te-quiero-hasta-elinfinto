@@ -62,3 +62,14 @@ Claude 这份：Ctrl+C 停掉 start.sh 后，Ubuntu 里运行 `bash /root/cove-c
 ChatGPT 这份照旧：`cd /root/qianqian-music && git pull --ff-only && npm run build`，重启它自己的窗口。
 
 日志里不会出现 Cookie 和 token（`src/logRedaction.ts` 会替换成 `<hidden>`）。
+
+## 多人听（你 + ChatGPT 的号 + Claude 的号在同一个房间）
+
+在网易云「一起听」面板的「邀请听友」里，把两个 AI 的账号都勾上邀请（不要点「匹配多人听」，那是和陌生人匹配）。
+两份服务各自接受你的邀请，进入同一个房间。
+
+- 你说的话：两个 AI 都必须回复（和双人听一样）。
+- 另一个 AI 说的话：作为「其他成员」消息转给这边的 AI，可以不回；你开口之前最多连续转 2 条，两个 AI 不会无限互聊。
+- 想让两个 AI 完全不理对方：在配置里加 `NETEASE_PEER_MESSAGE_LIMIT=0`
+  （ChatGPT 那份写在启动命令前，Claude 那份写进 `/root/cove-claude-secrets/bridge.env`）。
+- 「主人」是 `NETEASE_INVITER_UID`；没填时，就是邀请这个账号进房间的人。

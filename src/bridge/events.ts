@@ -11,7 +11,7 @@ function replyRoutingFor(source: string): { replyRoute?: ReplyRoute; replyPolicy
 }
 
 function streamRoutingFor(source: string): { stream: BridgeStream; stateKey?: string } {
-  if (source === "netease.chatroom") return { stream: "conversation" };
+  if (source === "netease.chatroom" || source === "netease.chatroom.peer") return { stream: "conversation" };
   if (source.startsWith("netease.")) {
     return { stream: "state", stateKey: "netease.together.presence" };
   }
@@ -37,7 +37,14 @@ export function buildBridgeEvent(
       ]
     : [];
 
-  const originContext = source === "netease.chatroom"
+  const originContext = source === "netease.chatroom.peer"
+    ? [
+        "MESSAGE ORIGIN: NetEase ChatRoom, written by ANOTHER room member (often another AI), not by the owner.",
+        "Multi-person Listen Together: the owner is also in the room and is the person you serve.",
+        "Reply only if it genuinely adds something for the owner; keep it to 1-2 short bubbles and never start a back-and-forth with the other AI.",
+        "Silence is fine: if you do not reply, simply do not call the reply tool.",
+      ]
+    : source === "netease.chatroom"
     ? [
         "MESSAGE ORIGIN: NetEase ChatRoom.",
         "The human typed this message inside NetEase Cloud Music, NOT in the ChatGPT conversation window.",
@@ -54,7 +61,9 @@ export function buildBridgeEvent(
           "Treat the visible text as the current foreground user message.",
         ];
 
-  const visibleText = source === "netease.chatroom"
+  const visibleText = source === "netease.chatroom.peer"
+    ? "【网易云聊天室 · 其他成员】\n" + text
+    : source === "netease.chatroom"
     ? "【网易云聊天室】\n" + text
     : source.startsWith("netease.")
       ? "【网易云一起听状态】\n" + text

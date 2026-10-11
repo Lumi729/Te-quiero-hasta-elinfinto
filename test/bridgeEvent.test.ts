@@ -48,3 +48,13 @@ test("NetEase playback state is labeled as state and not direct user chat", asyn
   assert.match(event.modelContext, /MESSAGE ORIGIN: NetEase Listen Together state\/event stream/);
   assert.match(event.modelContext, /NOT a direct user chat message/);
 });
+
+test("peer chat from another room member is an optional conversation event", async () => {
+  const { buildBridgeEvent } = await import("../src/bridge/events.js");
+  const event = buildBridgeEvent("p1", "netease.chatroom.peer", "顾辞_cci：你好");
+  assert.equal(event.replyPolicy, "optional");
+  assert.equal(event.replyRoute, "netease.chatroom");
+  assert.equal(event.stream, "conversation");
+  assert.match(event.visibleText, /其他成员/);
+  assert.match(event.modelContext, /never start a back-and-forth/);
+});

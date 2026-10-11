@@ -22,6 +22,8 @@ type TogetherWorkerOptions = {
   cookie: string;
   enabled: boolean;
   inviterUid?: string;
+  /** Messages from other room members (e.g. another AI) forwarded in a row before the owner speaks again. */
+  peerMessageLimit?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   playbackReconcileIntervalMs?: number;
@@ -76,6 +78,9 @@ export class TogetherWorker {
   private readonly handledChatMessageKeys = new Set<string>();
   private running = false;
   private roomId: string | null = null;
+  // Multi-person rooms: the owner is NETEASE_INVITER_UID, else whoever invited this account.
+  private roomInviterId: string | null = null;
+  private peerMessagesSinceOwner = 0;
   private chatRoomId: string | null = null;
   private previousSongId: string | null = null;
   private previousPlayStatus: PlayingState["playStatus"] = "UNKNOWN";
@@ -514,6 +519,7 @@ export class TogetherWorker {
     try {
       const accepted = await this.client.acceptInvite(invite.roomId, invite.inviterId);
       this.enterRoom(accepted.roomId ?? invite.roomId, accepted.chatRoomId);
+      this.roomInviterId = invite.inviterId;
       if (accepted.roomId && accepted.chatRoomId) {
         await this.ensureRealtime(accepted.roomId, accepted.chatRoomId);
       }
@@ -530,6 +536,7 @@ export class TogetherWorker {
       void this.realtime.disconnect();
       this.nextPlaybackClientSeq = 1;
     }
+    if (changedRoom) { this.roomInviterId = null; this.peerMessagesSinceOwner = 0; }
     this.roomId = roomId;
     this.chatRoomId = chatRoomId;
     this.previousSongId = null;
@@ -871,11 +878,22 @@ export class TogetherWorker {
       this.handledChatMessageKeys.delete(oldest);
     }
 
-    this.options.onEvent(
-      "netease.chatroom",
-      message.text,
-      this.currentLyricsModelContext ?? undefined,
-    );
+    // In a multi-person room only the owner's words demand a reply. Another member (often the other
+    // AI) is forwarded as an optional peer event, and only a few in a row, so two AIs cannot loop.
+    const owner = this.options.inviterUid ?? this.roomInviterId;
+    if (!owner || message.senderId === owner) {
+      this.peerMessagesSinceOwner = 0;
+      this.options.onEvent("netease.chatroom", message.text, this.currentLyricsModelContext ?? undefined);
+      return;
+    }
+    this.peerMessagesSinceOwner += 1;
+    const limit = this.options.peerMessageLimit ?? 2;
+    if (this.peerMessagesSinceOwner > limit) {
+      console.log(`NetEase peer message not forwarded (${limit} in a row since the owner spoke)`);
+      return;
+    }
+    const nick = message.senderNick?.trim() || "房间里的另一位";
+    this.options.onEvent("netease.chatroom.peer", `${nick}：${message.text}`, this.currentLyricsModelContext ?? undefined);
   }
 
   private async loadLyrics(song: SongDetails): Promise<string | undefined> {
@@ -943,6 +961,7 @@ export function createTogetherWorker(
     cookie,
     enabled,
     inviterUid: process.env.NETEASE_INVITER_UID?.trim() || undefined,
+    peerMessageLimit: (() => { const n = Number(process.env.NETEASE_PEER_MESSAGE_LIMIT ?? 2); return Number.isInteger(n) && n >= 0 ? n : 2; })(),
     pollIntervalMs: parseInterval("TOGETHER_POLL_INTERVAL_MS", 4000),
     heartbeatIntervalMs: parseInterval("TOGETHER_HEARTBEAT_INTERVAL_MS", 10_000),
     playbackReconcileIntervalMs: parseInterval("TOGETHER_PLAYBACK_RECONCILE_INTERVAL_MS", 30_000),

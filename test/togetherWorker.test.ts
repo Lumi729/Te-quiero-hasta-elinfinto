@@ -1124,3 +1124,40 @@ test("direct song stops on room or mode changes during queue confirmation", asyn
     assert.equal(internals.queueMutationPending, false);
   }
 });
+
+test("multi-person room: owner messages need a reply, another AI is optional and cannot loop", () => {
+  const events: Array<{ source: string; text: string }> = [];
+  const worker = new TogetherWorker({ cookie: "", enabled: false, inviterUid: "1001", onEvent: (source, text) => { events.push({ source, text }); } });
+  const handle = (worker as unknown as { handleRealtimeChatMessage: (m: RealtimeChatRoomMessage) => void }).handleRealtimeChatMessage.bind(worker);
+  let id = 0;
+  const say = (senderId: string, senderNick: string, text: string) => handle({ type: "chatroom_message", category: "text", msgType: 0, senderId, senderNick, text, messageId: "m" + ++id, timetagMs: id, receivedAtMs: id });
+  say("1001", "Lumi_LL", "晚上好");
+  say("2002", "顾辞_cci", "晚上好呀");
+  say("2002", "顾辞_cci", "今天听什么");
+  say("2002", "顾辞_cci", "还在吗");
+  say("2002", "顾辞_cci", "第四句");
+  assert.deepEqual(events, [
+    { source: "netease.chatroom", text: "晚上好" },
+    { source: "netease.chatroom.peer", text: "顾辞_cci：晚上好呀" },
+    { source: "netease.chatroom.peer", text: "顾辞_cci：今天听什么" },
+  ], "after two peer messages in a row the other AI is no longer forwarded");
+  say("1001", "Lumi_LL", "你们俩聊聊");
+  say("2002", "", "好");
+  assert.deepEqual(events.slice(3), [
+    { source: "netease.chatroom", text: "你们俩聊聊" },
+    { source: "netease.chatroom.peer", text: "房间里的另一位：好" },
+  ], "owner speaking resets the guard");
+});
+
+test("without a configured owner, the person who invited this account is the owner", () => {
+  const events: string[] = [];
+  const worker = new TogetherWorker({ cookie: "", enabled: false, peerMessageLimit: 0, onEvent: (source) => { events.push(source); } });
+  const internals = worker as unknown as { roomInviterId: string | null; handleRealtimeChatMessage: (m: RealtimeChatRoomMessage) => void };
+  const msg = (senderId: string, n: number): RealtimeChatRoomMessage => ({ type: "chatroom_message", category: "text", msgType: 0, senderId, senderNick: null, text: "hi " + n, messageId: "x" + n, timetagMs: n, receivedAtMs: n });
+  internals.handleRealtimeChatMessage(msg("7", 1));
+  assert.deepEqual(events, ["netease.chatroom"], "unknown owner keeps the original one-to-one behaviour");
+  internals.roomInviterId = "9";
+  internals.handleRealtimeChatMessage(msg("7", 2));
+  internals.handleRealtimeChatMessage(msg("9", 3));
+  assert.deepEqual(events, ["netease.chatroom", "netease.chatroom"], "limit 0 ignores other members entirely");
+});
