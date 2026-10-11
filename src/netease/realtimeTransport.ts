@@ -50,6 +50,7 @@ export type RealtimeTransportStatus = {
   lastPlaybackEvent: RealtimePlaybackEvent | null;
   lastChatMessage: RealtimeChatRoomMessage | null;
   lastError: string | null;
+  lastUnrecognizedEvent?: { receivedAtMs: number; shape: string[] } | null;
 };
 
 export type RealtimeChatSendResult = {
@@ -243,6 +244,37 @@ function sanitizePlaybackDiagnostic(value: unknown, depth = 0): unknown {
     }
   }
   return result;
+}
+
+// Unknown room protocols must be inspected without exporting chat text or credentials.
+// Only known structural field names and numeric event discriminators survive.
+export function describeUnknownRoomEvent(raw: unknown): string[] {
+  const fields: string[] = [];
+  const keys = new Set([...PLAYBACK_DIAGNOSTIC_KEYS,
+    "msg_attach_", "msg_body_", "msg_setting_", "ext_", "msg_type_", "sub_type_",
+    "payload", "body", "message", "event", "playCommand", "playback", "status",
+    "song", "music", "musicId", "position", "progressMs", "duration", "playlist",
+  ]);
+  function visit(value: unknown, path: string, depth: number): void {
+    if (depth > 7 || fields.length >= 64) return;
+    const parsed = parseJsonString(value);
+    if (Array.isArray(parsed)) {
+      fields.push(`${path}:array`);
+      for (const item of parsed.slice(0, 4)) visit(item, `${path}[]`, depth + 1);
+    } else if (parsed && typeof parsed === "object") {
+      for (const [key, child] of Object.entries(parsed)) {
+        if (!keys.has(key) || fields.length >= 64) continue;
+        const next = `${path}.${key}`;
+        const code = ["event_type", "type", "msg_type_", "sub_type_"].includes(key)
+          ? readNumber(child) : null;
+        fields.push(code !== null && Number.isSafeInteger(code)
+          ? `${next}:code=${code}` : `${next}:${typeof child}`);
+        visit(child, next, depth + 1);
+      }
+    }
+  }
+  visit(raw, "$", 0);
+  return fields;
 }
 
 export function buildPlaybackDiagnostic(raw: unknown): Record<string, unknown> | null {
@@ -439,12 +471,16 @@ export class NeteaseRealtimeTransport {
       lastPlaybackEvent: null,
       lastChatMessage: null,
       lastError: null,
+      lastUnrecognizedEvent: null,
     };
   }
 
   getStatus(): RealtimeTransportStatus {
     return {
       ...this.status,
+      lastUnrecognizedEvent: this.status.lastUnrecognizedEvent
+        ? { ...this.status.lastUnrecognizedEvent, shape: [...this.status.lastUnrecognizedEvent.shape] }
+        : null,
       lastPlaybackEvent: this.status.lastPlaybackEvent
         ? { ...this.status.lastPlaybackEvent }
         : null,
@@ -680,6 +716,12 @@ export class NeteaseRealtimeTransport {
       const message = decodeRealtimeChatRoomMessage(args[1], receivedAtMs);
       if (!message) return;
       this.status.lastChatMessage = message;
+      if (message.category === "custom" || message.category === "notification") {
+        this.status.lastUnrecognizedEvent = {
+          receivedAtMs,
+          shape: describeUnknownRoomEvent(args[1]),
+        };
+      }
       const sender = message.senderId ? `***${message.senderId.slice(-4)}` : "unknown";
       const messageId = message.messageId ? `***${message.messageId.slice(-6)}` : "unknown";
       const textPreview = message.category === "text" && message.text
@@ -737,8 +779,9 @@ export class NeteaseRealtimeTransport {
       roomId: options.roomId,
       chatRoomId: options.chatRoomId,
       credentialsReady: true,
-      lastPlaybackEvent: this.status.lastPlaybackEvent,
-      lastChatMessage: this.status.lastChatMessage,
+      lastPlaybackEvent: this.status.roomId === options.roomId ? this.status.lastPlaybackEvent : null,
+      lastChatMessage: this.status.roomId === options.roomId ? this.status.lastChatMessage : null,
+      lastUnrecognizedEvent: this.status.roomId === options.roomId ? this.status.lastUnrecognizedEvent : null,
       lastError: null,
     };
 
