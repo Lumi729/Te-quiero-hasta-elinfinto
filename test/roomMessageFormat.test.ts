@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRealtimeChatTextMessage, describeChatMessageFormat, learnRoomMessageFormat } from "../src/netease/realtimeTransport.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildRealtimeChatTextMessage, describeChatMessageFormat, learnRoomMessageFormat, loadRoomFormat, saveRoomFormat } from "../src/netease/realtimeTransport.js";
 
 const incoming = (ltType: string, roomId: string, msgType = 0, extra: Record<string, unknown> = {}) => ({
   msg_type_: msgType,
@@ -40,4 +43,22 @@ test("chat diagnostics show structure but never text, nick, avatar or full ids",
   assert.match(line, /"ltType":"MULTI"/);
   assert.match(line, /"bizType":"listenTogether"/);
   for (const secret of ["大家好", "Lumi_LL", "https://a/b.jpg", "359887555", "room-3-abcdef"]) assert.ok(!line.includes(secret), secret);
+});
+
+test("a learned room format survives a service restart in the same room only", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "cove-fmt-")), "f.json");
+  const format = learnRoomMessageFormat(incoming("MULTI_MATCH_SONG", "room-3"), "room-3", 5)!;
+  saveRoomFormat("room-3", format, file);
+  assert.deepEqual(loadRoomFormat("room-3", file), format);
+  assert.equal(loadRoomFormat("another-room", file), null);
+  assert.equal(loadRoomFormat("room-3", file + ".missing"), null);
+});
+
+test("format comparison shows setting flags and serverExt shape, not values", () => {
+  const out = describeChatMessageFormat(buildRealtimeChatTextMessage("hi", "room-3", "11111111-2222-3333-4444-555555555555", { userId: "18023854293", nick: "Infinito_LY", avatar: "https://x/y.jpg" }), "out");
+  assert.equal((out.setting as Record<string, unknown>).history_save_, true);
+  assert.deepEqual(Object.keys(out.serverExt as object).sort(), ["avatarUrl", "msgId", "nickname", "userId"]);
+  assert.equal((out.serverExt as Record<string, unknown>).msgId, "number:11digits");
+  const line = JSON.stringify(out);
+  for (const secret of ["Infinito_LY", "https://x/y.jpg", "18023854293"]) assert.ok(!line.includes(secret), secret);
 });

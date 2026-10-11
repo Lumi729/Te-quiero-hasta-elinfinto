@@ -1,6 +1,6 @@
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +53,8 @@ export type RealtimeTransportStatus = {
   lastUnrecognizedEvent?: { receivedAtMs: number; shape: string[] } | null;
   /** Listen Together chat format learned from this room's own messages (multi-person rooms differ from FRIEND). */
   roomMessageFormat?: RoomMessageFormat | null;
+  /** Masked structure of the latest official text message received and the latest one we sent (for comparison). */
+  textFormats?: { lastIn: Record<string, unknown> | null; lastOut: Record<string, unknown> | null };
 };
 
 export type RoomMessageFormat = {
@@ -408,9 +410,23 @@ export function describeChatMessageFormat(raw: unknown, direction: "in" | "out")
     bodyLength: readString(message.msg_body_)?.length ?? 0,
     ext: describe(ext),
     clientExt: describe(asRecord(parseJsonString(ext.clientExt))),
-    serverExtKeys: Object.keys(asRecord(parseJsonString(ext.serverExt))),
-    setting: Object.keys(setting).filter((key) => key !== "ext_"),
+    serverExt: Object.fromEntries(Object.entries(asRecord(parseJsonString(ext.serverExt))).map(([key, value]) => [key,
+      typeof value === "number" ? `number:${String(value).length}digits` : typeof value === "string" && /^\d+$/.test(value) ? `digits:${value.length}` : typeof value])),
+    setting: Object.fromEntries(Object.entries(setting).filter(([key]) => key !== "ext_").map(([key, value]) => [key, typeof value === "string" ? "string" : value])),
   };
+}
+
+// Each instance has its own TMPDIR / private /tmp, so this file is never shared between the two services.
+const ROOM_FORMAT_FILE = () => join(tmpdir(), "cove-room-format.json");
+export function saveRoomFormat(roomId: string, format: RoomMessageFormat, file = ROOM_FORMAT_FILE()): void {
+  try { writeFileSync(file, JSON.stringify({ roomId, format }), { mode: 0o600 }); } catch { /* best effort */ }
+}
+export function loadRoomFormat(roomId: string, file = ROOM_FORMAT_FILE()): RoomMessageFormat | null {
+  try {
+    const saved = asRecord(JSON.parse(readFileSync(file, "utf8")));
+    const format = asRecord(saved.format);
+    return saved.roomId === roomId && typeof format.ltType === "string" ? format as unknown as RoomMessageFormat : null;
+  } catch { return null; }
 }
 
 export function buildRealtimeChatTextMessage(
@@ -550,6 +566,7 @@ export class NeteaseRealtimeTransport {
       lastError: null,
       lastUnrecognizedEvent: null,
       roomMessageFormat: null,
+      textFormats: { lastIn: null, lastOut: null },
     };
   }
 
@@ -568,6 +585,7 @@ export class NeteaseRealtimeTransport {
       roomMessageFormat: this.status.roomMessageFormat
         ? { ...this.status.roomMessageFormat, extra: { ...this.status.roomMessageFormat.extra } }
         : null,
+      textFormats: structuredClone(this.status.textFormats ?? { lastIn: null, lastOut: null }),
     };
   }
 
@@ -778,9 +796,15 @@ export class NeteaseRealtimeTransport {
         if (format) {
           const previous = this.status.roomMessageFormat;
           // A human/official text message is the best template; do not let other kinds override it.
-          if (!previous || format.learnedFrom === "text" || previous.learnedFrom !== "text") this.status.roomMessageFormat = format;
+          if (!previous || format.learnedFrom === "text" || previous.learnedFrom !== "text") {
+            this.status.roomMessageFormat = format;
+            if (previous?.ltType !== format.ltType || previous?.learnedFrom !== format.learnedFrom) saveRoomFormat(this.status.roomId, format);
+          }
           if (previous?.ltType !== format.ltType) console.log(`NetEase room chat format: ltType=${format.ltType} from=${format.learnedFrom}`);
         }
+      }
+      if (readNumber(asRecord(args[1]).msg_type_) === 0) {
+        this.status.textFormats = { lastIn: describeChatMessageFormat(args[1], "in"), lastOut: this.status.textFormats?.lastOut ?? null };
       }
       if (/^(1|true|on|yes)$/i.test(process.env.TOGETHER_CHAT_DIAGNOSTICS?.trim() ?? "")) {
         console.log(`NetEase chat diagnostic: ${JSON.stringify(describeChatMessageFormat(args[1], "in"))}`);
@@ -875,7 +899,11 @@ export class NeteaseRealtimeTransport {
       lastPlaybackEvent: this.status.roomId === options.roomId ? this.status.lastPlaybackEvent : null,
       lastChatMessage: this.status.roomId === options.roomId ? this.status.lastChatMessage : null,
       lastUnrecognizedEvent: this.status.roomId === options.roomId ? this.status.lastUnrecognizedEvent : null,
-      roomMessageFormat: this.status.roomId === options.roomId ? this.status.roomMessageFormat ?? null : null,
+      // A restart inside the same room reuses the format learned before, so AI chat shows at once.
+      roomMessageFormat: this.status.roomId === options.roomId && this.status.roomMessageFormat
+        ? this.status.roomMessageFormat
+        : loadRoomFormat(options.roomId),
+      textFormats: this.status.textFormats ?? { lastIn: null, lastOut: null },
       lastError: null,
     };
 
@@ -976,6 +1004,7 @@ export class NeteaseRealtimeTransport {
 
     const messageId = randomUUID();
     const msg = buildRealtimeChatTextMessage(text, roomId, messageId, this.activeMemberProfile ?? undefined, this.status.roomMessageFormat, this.clientSessionId);
+    this.status.textFormats = { lastIn: this.status.textFormats?.lastIn ?? null, lastOut: describeChatMessageFormat(msg, "out") };
     if (/^(1|true|on|yes)$/i.test(process.env.TOGETHER_CHAT_DIAGNOSTICS?.trim() ?? "")) {
       console.log(`NetEase chat diagnostic: ${JSON.stringify(describeChatMessageFormat(msg, "out"))}`);
     }

@@ -104,6 +104,10 @@ export function registerNeteaseTogetherTools(
           learnedAtMs: z.number(),
           usesClientSession: z.boolean().optional(),
         }).nullable().optional(),
+        textFormats: z.object({
+          lastIn: z.record(z.string(), z.unknown()).nullable(),
+          lastOut: z.record(z.string(), z.unknown()).nullable(),
+        }).optional(),
         lastError: z.string().nullable(),
       },
       annotations: {
