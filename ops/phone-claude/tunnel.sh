@@ -15,6 +15,7 @@ if [ ! -f "$config" ]; then
   cat > "$config" <<YML
 tunnel: $id
 credentials-file: $dir/$id.json
+protocol: http2
 ingress:
   - hostname: $host
     path: ^/listener/events\$
@@ -25,4 +26,5 @@ ingress:
 YML
   echo "已写好 $config（原来的 cove-music.yml 没有改动）。"
 fi
-exec cloudflared tunnel --config "$config" run
+# http2 over TCP: some networks block QUIC (UDP), which shows as "failed to dial to edge with quic".
+exec cloudflared tunnel --protocol http2 --config "$config" run

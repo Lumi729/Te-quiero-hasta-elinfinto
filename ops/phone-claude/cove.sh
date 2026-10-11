@@ -18,7 +18,8 @@ declare -A CMD=(
 )
 GROUP_chatgpt="gpt-music gpt-oauth gpt-tunnel"
 GROUP_claude="claude claude-tunnel"
-names() { case "${1:-all}" in chatgpt) echo "$GROUP_chatgpt";; claude) echo "$GROUP_claude";; *) echo "$GROUP_chatgpt $GROUP_claude";; esac; }
+names() { case "${1:-all}" in chatgpt) echo "$GROUP_chatgpt";; claude) echo "$GROUP_claude";; all) echo "$GROUP_chatgpt $GROUP_claude";;
+  gpt-music|gpt-oauth|gpt-tunnel|claude-tunnel) echo "$1";; *) echo "不认识：$1（可用 all / chatgpt / claude / claude-tunnel / gpt-tunnel）" >&2; exit 1;; esac; }
 running() { tmux list-windows -t "$S" -F '#W' 2>/dev/null | grep -qx "$1"; }
 up() { curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$1/" && echo "✓ 在运行" || echo "✗ 没有响应"; }
 
