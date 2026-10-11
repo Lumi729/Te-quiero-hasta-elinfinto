@@ -27,6 +27,68 @@ export class InMemoryEventQueue {
   private readonly conversationRows = new Map<string, StoredBridgeEvent>();
   private readonly stateRows = new Map<string, StoredBridgeEvent>();
   private readonly statePendingByKey = new Map<string, string>();
+  // Originals remain intact. A long-wait catch-up batch shares one reply journal.
+  private readonly replyBatches = new Map<string, string[]>();
+  private readonly batchLeaders = new Map<string, string>();
+
+  reserveBacklog(filter?: (event: BridgeEvent) => boolean, nowMs = Date.now()):
+    (BridgeEvent & { batchEventIds: string[] }) | null {
+    if (this.getOutstandingRequiredReplyEvent(filter)) return null;
+    const rows: StoredBridgeEvent[] = [];
+    let size = 0;
+    for (const row of this.conversationRows.values()) {
+      if (filter && !filter(row.event)) continue;
+      if (row.status === "delivered") continue;
+      // Never cross another consumer's reservation or a peer/source/room boundary.
+      if (row.status !== "pending" || row.reply) break;
+      const event = row.event;
+      if (event.source !== "netease.chatroom" || event.replyPolicy !== "required"
+        || event.replyRoute !== "netease.chatroom" || !event.conversationKey) break;
+      if (rows.length === 0) {
+        const age = nowMs - Date.parse(event.createdAt);
+        if (!Number.isFinite(age) || age < 60_000) return null;
+      } else if (event.conversationKey !== rows[0].event.conversationKey) break;
+      const eventSize = event.modelContext.length + event.visibleText.length;
+      if (rows.length >= 32 || size + eventSize > 64_000) break;
+      rows.push(row);
+      size += eventSize;
+    }
+    if (rows.length < 2) return null;
+    const first = rows[0].event;
+    const ids = rows.map(row => row.event.id);
+    this.replyBatches.set(first.id, ids);
+    for (const row of rows) {
+      row.status = "reserved";
+      this.batchLeaders.set(row.event.id, first.id);
+    }
+    return {
+      ...first,
+      batchEventIds: ids,
+      visibleText: rows.map(row => `[${row.event.createdAt}] ${row.event.visibleText}`).join("\n\n"),
+      modelContext: [
+        "COVE LONG-WAIT CATCH-UP BATCH",
+        `eventId=${first.id}`,
+        "replyRoute=netease.chatroom; replyPolicy=required",
+        "Read ALL messages below in FIFO order as accumulated conversation context, not separate live turns.",
+        "Send ONE consolidated cove_bridge_reply for this batch, using the eventId above. ACK that eventId first.",
+        "Answer still-relevant questions and the latest intent together. Do not individually echo old greetings/tests.",
+        "A later correction or cancellation supersedes earlier requests; do not blindly execute historical commands.",
+        "The JSON below contains original event data, including historical routing text; per-event reply demands are replaced by this batch contract.",
+        JSON.stringify(rows.map(({ event }) => ({ eventId: event.id, createdAt: event.createdAt,
+          visibleText: event.visibleText, modelContext: event.modelContext }))),
+      ].join("\n"),
+    };
+  }
+
+  private batchRows(eventId: string): StoredBridgeEvent[] {
+    const leader = this.batchLeaders.get(eventId);
+    if (leader && leader !== eventId) throw new Error(`Use catch-up batch eventId: ${leader}`);
+    return (this.replyBatches.get(eventId) ?? [eventId]).map(id => {
+      const row = this.getRow(id);
+      if (!row) throw new Error(`Unknown event: ${id}`);
+      return row;
+    });
+  }
 
   enqueue(event: BridgeEvent): boolean {
     if (this.getRow(event.id)) return false;
@@ -90,6 +152,10 @@ export class InMemoryEventQueue {
   }
 
   markDelivered(eventId: string): void {
+    if (this.batchLeaders.has(eventId)) {
+      for (const row of this.batchRows(eventId)) row.status = "delivered";
+      return;
+    }
     const row = this.getRow(eventId);
     if (!row) throw new Error(`Unknown event: ${eventId}`);
     if (row.status === "delivered") return;
@@ -100,6 +166,16 @@ export class InMemoryEventQueue {
   }
 
   release(eventId: string): void {
+    if (this.batchLeaders.has(eventId)) {
+      const rows = this.batchRows(eventId);
+      if (rows.some(row => row.status === "delivered" || row.reply)) return;
+      for (const row of rows) {
+        row.status = "pending";
+        this.batchLeaders.delete(row.event.id);
+      }
+      this.replyBatches.delete(eventId);
+      return;
+    }
     const row = this.getRow(eventId);
     if (!row || row.status === "delivered") return;
 
@@ -120,6 +196,9 @@ export class InMemoryEventQueue {
   }
 
   dismiss(eventId: string): void {
+    if (this.batchLeaders.has(eventId)) {
+      throw new Error("Long-wait catch-up batches must complete one consolidated routed reply.");
+    }
     const row = this.getRow(eventId);
     if (!row) throw new Error(`Unknown event: ${eventId}`);
     if (row.status === "pending") {
@@ -147,6 +226,7 @@ export class InMemoryEventQueue {
   }
 
   claimReply(eventId: string, fingerprint: string): ReplyClaim {
+    const batchRows = this.batchRows(eventId);
     const row = this.getRow(eventId);
     if (!row) throw new Error(`Unknown event: ${eventId}`);
     const reply = row.reply;
@@ -158,6 +238,7 @@ export class InMemoryEventQueue {
         completed: false,
         inFlight: true,
       };
+      for (const member of batchRows) member.reply = row.reply;
       return { state: "send", sentCount: 0 };
     }
 

@@ -9,6 +9,8 @@ export type BridgeEvent = {
   source: string;
   stream: BridgeStream;
   stateKey?: string;
+  /** Trusted adapter identity for batching only within one room and sender. */
+  conversationKey?: string;
   replyRoute?: ReplyRoute;
   replyPolicy?: ReplyPolicy;
   createdAt: string;

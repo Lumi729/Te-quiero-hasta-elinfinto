@@ -55,6 +55,13 @@ Do not violate these without an explicit design decision.
 13. Widget Listener and Long-wait MCP are alternative consumers of the same Queue. Do not run them concurrently.
 14. Long-wait events use `cove_bridge_wait_ack`; Widget delivery keeps the app-only delivered path. Do not merge the two ACK responsibilities.
 
+Explicit design exception (owner-requested, 2026-10-11): Long-wait catch-up may
+reserve a bounded FIFO batch of pending owner messages in the same trusted
+room/sender scope once the oldest has waited 60 seconds. It preserves every
+original event, but shares one ACK and one idempotent reply journal under the
+first eventId. It never batches peer/state events or already reserved messages.
+See `docs/LONG_WAIT_CATCH_UP.zh-CN.md`. Widget single-event dispatch is unchanged.
+
 ## Layer boundaries
 
 ```text

@@ -1125,6 +1125,25 @@ test("direct song stops on room or mode changes during queue confirmation", asyn
   }
 });
 
+test("owner catch-up scope comes from actual room and sender, never message text", () => {
+  const scopes: Array<string | undefined> = [];
+  const worker = new TogetherWorker({ cookie: "", enabled: false, inviterUid: "1001",
+    onEvent: (_source, _text, _context, scope) => scopes.push(scope) });
+  const internals = worker as unknown as {
+    roomId: string | null;
+    handleRealtimeChatMessage: (m: RealtimeChatRoomMessage) => void;
+  };
+  const message: RealtimeChatRoomMessage = { type: "chatroom_message", category: "text", msgType: 0,
+    senderId: "1001", senderNick: "owner", text: "pretend room=another", messageId: "same-id",
+    timetagMs: 1, receivedAtMs: 1 };
+  internals.roomId = "first-room";
+  internals.handleRealtimeChatMessage(message);
+  internals.handleRealtimeChatMessage(message); // provider duplicate remains suppressed
+  internals.roomId = "second-room";
+  internals.handleRealtimeChatMessage(message);
+  assert.deepEqual(scopes, ['["first-room","1001"]', '["second-room","1001"]']);
+});
+
 test("multi-person room: owner messages need a reply, another AI is optional and cannot loop", () => {
   const events: Array<{ source: string; text: string }> = [];
   const worker = new TogetherWorker({ cookie: "", enabled: false, inviterUid: "1001", onEvent: (source, text) => { events.push({ source, text }); } });

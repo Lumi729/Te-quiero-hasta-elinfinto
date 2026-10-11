@@ -38,6 +38,7 @@ export function registerBridgeWaitTool(
         "Long-wait Listener path. Hold this MCP tool call until a Bridge event becomes available or the timeout expires. " +
         "Use only when the user explicitly asks to start long-wait listening. Do not run this concurrently with the Widget Listener. " +
         "When hasEvent=true, immediately call cove_bridge_wait_ack with the returned eventId, then handle the event using modelContext and visibleText. " +
+        "If batchEventIds is present, read the backlog together and send one consolidated reply, not one reply per old message. " +
         "After any required routed reply completes, call cove_bridge_wait again only if the user asked to remain listening.",
       inputSchema: {
         timeoutSeconds: z.number().int().min(1).max(DEFAULT_TIMEOUT_SECONDS).optional(),
@@ -55,6 +56,7 @@ export function registerBridgeWaitTool(
         replyRoute: z.literal("netease.chatroom").optional(),
         replyPolicy: z.enum(["required", "optional"]).optional(),
         createdAt: z.string().optional(),
+        batchEventIds: z.array(z.string()).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -90,7 +92,8 @@ export function registerBridgeWaitTool(
           };
         }
 
-        const event = queue.reserveNext(eventFilter);
+        const batch = queue.reserveBacklog(eventFilter);
+        const event = batch ?? queue.reserveNext(eventFilter);
         if (event) {
           if (extra.signal.aborted) {
             queue.release(event.id);
@@ -111,6 +114,7 @@ export function registerBridgeWaitTool(
               replyRoute: event.replyRoute,
               replyPolicy: event.replyPolicy,
               createdAt: event.createdAt,
+              ...(batch ? { batchEventIds: batch.batchEventIds } : {}),
             },
             content: [{
               type: "text",

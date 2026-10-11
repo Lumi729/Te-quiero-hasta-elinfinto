@@ -26,6 +26,7 @@ function enqueueTogetherEvent(
   source: string,
   text: string,
   additionalModelContext?: string,
+  conversationKey?: string,
 ): boolean {
   const id = randomUUID();
   const created = queue.enqueue(buildBridgeEvent(
@@ -34,6 +35,7 @@ function enqueueTogetherEvent(
     text,
     new Date().toISOString(),
     additionalModelContext,
+    conversationKey,
   ));
   if (created) listenerWakeHub.wake(source);
   return created;

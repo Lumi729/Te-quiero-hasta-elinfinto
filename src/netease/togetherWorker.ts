@@ -16,7 +16,7 @@ import type {
   TogetherWorkerStatus,
 } from "./types.js";
 
-type EventSink = (source: string, text: string, modelContext?: string) => unknown;
+type EventSink = (source: string, text: string, modelContext?: string, conversationKey?: string) => unknown;
 
 type TogetherWorkerOptions = {
   cookie: string;
@@ -883,7 +883,8 @@ export class TogetherWorker {
     const owner = this.options.inviterUid ?? this.roomInviterId;
     if (!owner || message.senderId === owner) {
       this.peerMessagesSinceOwner = 0;
-      this.options.onEvent("netease.chatroom", message.text, this.currentLyricsModelContext ?? undefined);
+      this.options.onEvent("netease.chatroom", message.text, this.currentLyricsModelContext ?? undefined,
+        this.roomId && message.senderId ? JSON.stringify([this.roomId, message.senderId]) : undefined);
       return;
     }
     this.peerMessagesSinceOwner += 1;
