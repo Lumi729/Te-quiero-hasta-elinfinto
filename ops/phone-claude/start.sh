@@ -7,6 +7,7 @@ APP=/root/cove-claude SECRETS=/root/cove-claude-secrets ACCESS=/root/cove-claude
 [ -s "$SECRETS/netease-cookie" ] || { echo '第二个网易云账号还没登录：重新运行 setup.sh'; exit 1; }
 set -a; . "$SECRETS/bridge.env"; set +a
 export NODE_ENV=production NETEASE_COOKIE="$(cat "$SECRETS/netease-cookie")"
+[ -f /root/cove-chat-diagnostics ] && export TOGETHER_CHAT_DIAGNOSTICS=1 # masked chat-format logging
 export TMPDIR=/root/cove-claude-tmp # temporary files and audio clips never mix with the ChatGPT instance
 COVE_PUBLIC_ORIGIN=https://gege.lumi.org.cn COVE_GATEWAY_PORT=8798 COVE_UPSTREAM_PORT=8797 COVE_ACCESS_DIR="$ACCESS" \
   NETEASE_COOKIE= BRIDGE_INGEST_TOKEN= node "$APP/ops/oauth-gateway/oauth-gateway.cjs" &

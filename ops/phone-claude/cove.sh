@@ -5,12 +5,15 @@
 #   bash ~/cove.sh chatgpt    start only the ChatGPT one     bash ~/cove.sh claude   only the Claude one
 #   bash ~/cove.sh status     what is running                 bash ~/cove.sh look     watch the windows
 #   bash ~/cove.sh stop       stop everything (or: stop chatgpt / stop claude)
+#   bash ~/cove.sh diag on|off   masked chat-format logging for both instances (restart music to apply)
 #   bash ~/cove.sh check      full health check incl. the public HTTPS addresses (prints no cookie/token)
 set -uo pipefail
 S=cove
 in_ubuntu() { echo "proot-distro login cove -- bash -c '$1'"; }
 declare -A CMD=(
-  [gpt-music]="$(in_ubuntu 'cd /root/qianqian-music && NETEASE_COOKIE_FILE=/root/cove-resonance/.netease-cookie bash scripts/start-personal.sh')"
+  # Both instances serve the same owner: the ChatGPT one reuses the UID entered for the Claude one,
+  # so in a three-person room it never mistakes the other AI for the owner.
+  [gpt-music]="$(in_ubuntu 'cd /root/qianqian-music && export NETEASE_INVITER_UID="$(sed -n s/^NETEASE_INVITER_UID=//p /root/cove-claude-secrets/bridge.env 2>/dev/null)" && { [ -f /root/cove-chat-diagnostics ] && export TOGETHER_CHAT_DIAGNOSTICS=1; true; } && NETEASE_COOKIE_FILE=/root/cove-resonance/.netease-cookie bash scripts/start-personal.sh')"
   [gpt-oauth]="$(in_ubuntu 'node /root/cove-access/oauth-gateway.cjs')"
   [gpt-tunnel]="cloudflared tunnel --config \"\$HOME/.cloudflared/cove-music.yml\" run"
   [claude]="$(in_ubuntu 'bash /root/cove-claude/ops/phone-claude/start.sh')"
@@ -58,6 +61,12 @@ case "${1:-start}" in
       running "$n" || continue
       echo "-- $n"; tmux capture-pane -p -t "$S:$n" -S -200 | grep -v '^$' | tail -n 6 | scrub
     done;;
+  diag)
+    case "${2:-}" in
+      on) proot-distro login cove -- touch /root/cove-chat-diagnostics; echo '诊断已打开：重启两份音乐服务后生效（bash ~/cove.sh stop gpt-music && bash ~/cove.sh stop claude && bash ~/cove.sh）。';;
+      off) proot-distro login cove -- rm -f /root/cove-chat-diagnostics; echo '诊断已关闭：重启两份音乐服务后生效。';;
+      *) echo '用法：bash ~/cove.sh diag on 或 bash ~/cove.sh diag off';;
+    esac;;
   look)
     echo '进入后：Ctrl+B 再按 n 切换下一个窗口，Ctrl+B 再按 d 退出查看（服务继续运行）。'; sleep 2
     exec tmux attach -t "$S";;

@@ -97,6 +97,12 @@ export function registerNeteaseTogetherTools(
           receivedAtMs: z.number(),
           shape: z.array(z.string()),
         }).nullable().optional(),
+        roomMessageFormat: z.object({
+          ltType: z.string(),
+          extra: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+          learnedFrom: z.enum(["text", "custom", "playback", "other"]),
+          learnedAtMs: z.number(),
+        }).nullable().optional(),
         lastError: z.string().nullable(),
       },
       annotations: {

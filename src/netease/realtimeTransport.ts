@@ -51,6 +51,16 @@ export type RealtimeTransportStatus = {
   lastChatMessage: RealtimeChatRoomMessage | null;
   lastError: string | null;
   lastUnrecognizedEvent?: { receivedAtMs: number; shape: string[] } | null;
+  /** Listen Together chat format learned from this room's own messages (multi-person rooms differ from FRIEND). */
+  roomMessageFormat?: RoomMessageFormat | null;
+};
+
+export type RoomMessageFormat = {
+  ltType: string;
+  /** Extra clientExt fields copied onto outgoing chat (room-level values only). */
+  extra: Record<string, string | number | boolean>;
+  learnedFrom: "text" | "custom" | "playback" | "other";
+  learnedAtMs: number;
 };
 
 export type RealtimeChatSendResult = {
@@ -343,11 +353,68 @@ function chatMessageCategory(msgType: number | null): RealtimeChatRoomMessage["c
   return "other";
 }
 
+// clientExt keys that describe one message or one sender, never copied from someone else's message.
+const PER_MESSAGE_EXT_KEYS = new Set(["clientMsgId", "msgId", "roomId", "userId", "uid", "nickname", "nick", "avatar", "avatarUrl", "text", "content", "msg", "at", "atList", "atUsers", "time", "timestamp"]);
+
+function listenTogetherExt(raw: unknown): { top: Record<string, unknown>; client: Record<string, unknown> } | null {
+  const message = asRecord(raw);
+  const ext = asRecord(parseJsonString(asRecord(message.msg_setting_).ext_));
+  const client = asRecord(parseJsonString(ext.clientExt));
+  const bizType = readString(client.bizType) ?? readString(ext.bizType);
+  if (bizType !== "listenTogether") return null;
+  return { top: ext, client };
+}
+
+/** Learn the room's chat format (ltType and room-level fields) from any message seen in that room. */
+export function learnRoomMessageFormat(raw: unknown, roomId: string, receivedAtMs = Date.now()): RoomMessageFormat | null {
+  const found = listenTogetherExt(raw);
+  if (!found) return null;
+  const ltType = readString(found.client.ltType) ?? readString(found.top.ltType);
+  const extRoom = readString(found.client.roomId) ?? readString(found.top.roomId);
+  if (!ltType || (extRoom && extRoom !== roomId)) return null;
+  const extra: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(found.client)) {
+    if (key === "bizType" || key === "ltType" || PER_MESSAGE_EXT_KEYS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") extra[key] = value;
+  }
+  const msgType = readNumber(asRecord(raw).msg_type_);
+  const learnedFrom = findPlaybackEnvelope(raw) ? "playback" : msgType === 0 ? "text" : msgType === 100 ? "custom" : "other";
+  return { ltType, extra, learnedFrom, learnedAtMs: receivedAtMs };
+}
+
+/** Masked structure of a chat message for TOGETHER_CHAT_DIAGNOSTICS: no text, nick, avatar or full ids. */
+export function describeChatMessageFormat(raw: unknown, direction: "in" | "out"): Record<string, unknown> {
+  const message = asRecord(raw);
+  const setting = asRecord(message.msg_setting_);
+  const ext = asRecord(parseJsonString(setting.ext_));
+  const mask = (value: unknown) => { const v = readString(value) ?? (typeof value === "number" ? String(value) : null); return v ? "***" + v.slice(-4) : null; };
+  const describe = (object: Record<string, unknown>) => Object.fromEntries(Object.entries(object).map(([key, value]) => {
+    if (["bizType", "ltType", "appName", "type", "subType"].includes(key)) return [key, value];
+    if (/id$/i.test(key)) return [key, mask(value)];
+    if (value && typeof value === "object") return [key, "{" + Object.keys(value).join(",") + "}"];
+    return [key, typeof value];
+  }));
+  const attach = readString(message.msg_attach_);
+  return {
+    direction,
+    msgType: readNumber(message.msg_type_),
+    subType: readNumber(message.sub_type_),
+    sender: mask(message.from_id_),
+    attachLength: attach?.length ?? 0,
+    bodyLength: readString(message.msg_body_)?.length ?? 0,
+    ext: describe(ext),
+    clientExt: describe(asRecord(parseJsonString(ext.clientExt))),
+    serverExtKeys: Object.keys(asRecord(parseJsonString(ext.serverExt))),
+    setting: Object.keys(setting).filter((key) => key !== "ext_"),
+  };
+}
+
 export function buildRealtimeChatTextMessage(
   text: string,
   roomId: string,
   messageId: string = randomUUID(),
   senderProfile?: RealtimeMemberProfile,
+  roomFormat?: Pick<RoomMessageFormat, "ltType" | "extra"> | null,
 ): Record<string, unknown> {
   const normalized = text.trim();
   if (!normalized) throw new Error("ChatRoom message cannot be empty");
@@ -372,8 +439,10 @@ export function buildRealtimeChatTextMessage(
     ...(serverExt ? { serverExt } : {}),
     appName: "music",
     clientExt: {
+      ...(roomFormat?.extra ?? {}),
       bizType: "listenTogether",
-      ltType: "FRIEND",
+      // Two-person rooms are FRIEND; multi-person rooms use another type the official client reveals.
+      ltType: roomFormat?.ltType ?? "FRIEND",
       roomId,
       clientMsgId: messageId,
     },
@@ -472,6 +541,7 @@ export class NeteaseRealtimeTransport {
       lastChatMessage: null,
       lastError: null,
       lastUnrecognizedEvent: null,
+      roomMessageFormat: null,
     };
   }
 
@@ -486,6 +556,9 @@ export class NeteaseRealtimeTransport {
         : null,
       lastChatMessage: this.status.lastChatMessage
         ? { ...this.status.lastChatMessage }
+        : null,
+      roomMessageFormat: this.status.roomMessageFormat
+        ? { ...this.status.roomMessageFormat, extra: { ...this.status.roomMessageFormat.extra } }
         : null,
     };
   }
@@ -692,6 +765,18 @@ export class NeteaseRealtimeTransport {
       const room = readNumber(args[0]);
       if (this.roomNumber !== null && room !== this.roomNumber) return;
       const receivedAtMs = Date.now();
+      if (this.status.roomId) {
+        const format = learnRoomMessageFormat(args[1], this.status.roomId, receivedAtMs);
+        if (format) {
+          const previous = this.status.roomMessageFormat;
+          // A human/official text message is the best template; do not let other kinds override it.
+          if (!previous || format.learnedFrom === "text" || previous.learnedFrom !== "text") this.status.roomMessageFormat = format;
+          if (previous?.ltType !== format.ltType) console.log(`NetEase room chat format: ltType=${format.ltType} from=${format.learnedFrom}`);
+        }
+      }
+      if (/^(1|true|on|yes)$/i.test(process.env.TOGETHER_CHAT_DIAGNOSTICS?.trim() ?? "")) {
+        console.log(`NetEase chat diagnostic: ${JSON.stringify(describeChatMessageFormat(args[1], "in"))}`);
+      }
       const event = decodeRealtimePlaybackEvent(args[1], receivedAtMs);
       if (event) {
         this.status.lastPlaybackEvent = event;
@@ -782,6 +867,7 @@ export class NeteaseRealtimeTransport {
       lastPlaybackEvent: this.status.roomId === options.roomId ? this.status.lastPlaybackEvent : null,
       lastChatMessage: this.status.roomId === options.roomId ? this.status.lastChatMessage : null,
       lastUnrecognizedEvent: this.status.roomId === options.roomId ? this.status.lastUnrecognizedEvent : null,
+      roomMessageFormat: this.status.roomId === options.roomId ? this.status.roomMessageFormat ?? null : null,
       lastError: null,
     };
 
@@ -881,7 +967,10 @@ export class NeteaseRealtimeTransport {
     }
 
     const messageId = randomUUID();
-    const msg = buildRealtimeChatTextMessage(text, roomId, messageId, this.activeMemberProfile ?? undefined);
+    const msg = buildRealtimeChatTextMessage(text, roomId, messageId, this.activeMemberProfile ?? undefined, this.status.roomMessageFormat);
+    if (/^(1|true|on|yes)$/i.test(process.env.TOGETHER_CHAT_DIAGNOSTICS?.trim() ?? "")) {
+      console.log(`NetEase chat diagnostic: ${JSON.stringify(describeChatMessageFormat(msg, "out"))}`);
+    }
     const normalized = text.trim();
 
     return await new Promise<RealtimeChatSendResult>((resolve, reject) => {
@@ -925,6 +1014,7 @@ export class NeteaseRealtimeTransport {
     this.status.connected = false;
     this.status.roomId = null;
     this.status.chatRoomId = null;
+    this.status.roomMessageFormat = null;
     this.status.credentialsReady = false;
     this.activeMemberProfile = null;
 
