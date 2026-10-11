@@ -41,6 +41,7 @@ proot-distro login cove -- cat /root/cove-claude/ops/phone-claude/cove.sh > ~/co
 | 两份全部打开 | `bash ~/cove.sh` |
 | 只开 ChatGPT / 只开 Claude | `bash ~/cove.sh chatgpt` / `bash ~/cove.sh claude` |
 | 看运行状态 | `bash ~/cove.sh status` |
+| 完整体检（含外网 401 / 元数据，不显示 Cookie 和 token） | `bash ~/cove.sh check` |
 | 看各个窗口的输出 | `bash ~/cove.sh look`（Ctrl+B 再按 n 切换，Ctrl+B 再按 d 退出查看） |
 | 全部停止 / 只停一份 | `bash ~/cove.sh stop` / `bash ~/cove.sh stop claude` |
 

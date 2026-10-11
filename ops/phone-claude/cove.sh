@@ -5,6 +5,7 @@
 #   bash ~/cove.sh chatgpt    start only the ChatGPT one     bash ~/cove.sh claude   only the Claude one
 #   bash ~/cove.sh status     what is running                 bash ~/cove.sh look     watch the windows
 #   bash ~/cove.sh stop       stop everything (or: stop chatgpt / stop claude)
+#   bash ~/cove.sh check      full health check incl. the public HTTPS addresses (prints no cookie/token)
 set -uo pipefail
 S=cove
 in_ubuntu() { echo "proot-distro login cove -- bash -c '$1'"; }
@@ -30,6 +31,30 @@ case "${1:-start}" in
     echo "ChatGPT 隧道：$(running gpt-tunnel && echo '✓ 窗口开着' || echo '✗ 没开')"
     echo "Claude 音乐服务 8797：$(up 8797)"; echo "Claude 授权服务 8798：$(up 8798)"
     echo "Claude 隧道：$(running claude-tunnel && echo '✓ 窗口开着' || echo '✗ 没开')";;
+  check)
+    scrub() { sed -E 's/((MUSIC_[A-Z_]*|__csrf|NMTID)=)[^; ]+/\1<hidden>/g; s/(Bearer )[A-Za-z0-9._~+\/-]+/\1<hidden>/g; s/([?&](code|session|token)=)[^& ]+/\1<hidden>/g'; }
+    pub() { # domain → "401 ✓" style verdicts for the public address
+      local d=$1 code meta
+      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST "https://$d/mcp/music")
+      meta=$(curl -s --max-time 20 "https://$d/.well-known/oauth-protected-resource")
+      case "$code" in 401) echo "  外网 https://$d/mcp/music → 401 ✓（正常：要求登录）";;
+        502|530|521|522|523|524|1033) echo "  外网 https://$d/mcp/music → $code ✗（Cloudflare 连不到手机：隧道没连上或本机端口没响应）";;
+        000) echo "  外网 https://$d/mcp/music → 打不开 ✗（手机没网，或 DNS 还没生效）";;
+        *) echo "  外网 https://$d/mcp/music → $code ✗";; esac
+      if grep -q "\"resource\":\"https://$d/mcp/music\"" <<<"$meta"; then echo "  登录信息地址 ✓"; else echo "  登录信息地址 ✗：$(head -c 120 <<<"$meta")"; fi
+    }
+    for n in gpt-music gpt-oauth gpt-tunnel claude claude-tunnel; do running "$n" || echo "窗口 $n 没开 ✗"; done
+    echo "== Claude 那份（gege.lumi.org.cn）"
+    echo "  本机 8797：$(up 8797)   本机 8798：$(up 8798)"; pub gege.lumi.org.cn
+    echo "  同时在跑的 Claude 隧道：$(pgrep -fc 'cove-claude.yml' || echo 0) 个（应为 1）"
+    echo "== ChatGPT 那份（cove.lumi.org.cn）"
+    echo "  本机 8787：$(up 8787)   本机 8788：$(up 8788)"; pub cove.lumi.org.cn
+    echo "  同时在跑的 ChatGPT 隧道：$(pgrep -fc 'cove-music.yml' || echo 0) 个（应为 1）"
+    echo "== 各窗口最后几行（已遮住 Cookie / token）"
+    for n in claude claude-tunnel gpt-tunnel; do
+      running "$n" || continue
+      echo "-- $n"; tmux capture-pane -p -t "$S:$n" -S -200 | grep -v '^$' | tail -n 6 | scrub
+    done;;
   look)
     echo '进入后：Ctrl+B 再按 n 切换下一个窗口，Ctrl+B 再按 d 退出查看（服务继续运行）。'; sleep 2
     exec tmux attach -t "$S";;
