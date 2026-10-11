@@ -74,3 +74,16 @@ test("AI chat carries the room's msgTag flags like official chat, never free tex
   assert.deepEqual(JSON.parse((msg.msg_setting_ as { ext_: string }).ext_).msgTag, { msgUserSource: "USER", userMsgGenerationMode: 1 });
   assert.equal(JSON.parse((buildRealtimeChatTextMessage("hi", "r2").msg_setting_ as { ext_: string }).ext_).msgTag, undefined, "two-person rooms unchanged");
 });
+
+test("msgTag with null, nested or numeric-string flags is still learned; long text never is", () => {
+  const raw = incoming("MULTI_MATCH_SONG", "room-3");
+  const ext = JSON.parse(raw.msg_setting_.ext_);
+  ext.msgTag = JSON.stringify({ msgUserSource: null, userMsgGenerationMode: { mode: "1" } });
+  raw.msg_setting_.ext_ = JSON.stringify(ext);
+  assert.deepEqual(learnRoomMessageFormat(raw, "room-3")!.msgTag, { msgUserSource: null, userMsgGenerationMode: { mode: "1" } });
+  ext.msgTag = { msgUserSource: "a sentence with spaces", userMsgGenerationMode: "x".repeat(40) };
+  raw.msg_setting_.ext_ = JSON.stringify(ext);
+  assert.equal(learnRoomMessageFormat(raw, "room-3")!.msgTag, undefined);
+  const shape = describeChatMessageFormat(raw, "in");
+  assert.deepEqual(shape.msgTag, { msgUserSource: "string:22:spaces", userMsgGenerationMode: "string:40" });
+});

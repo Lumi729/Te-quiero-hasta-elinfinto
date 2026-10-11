@@ -65,18 +65,42 @@ export type RoomMessageFormat = {
   learnedAtMs: number;
   /** The room's messages carry a device session id; we then send our own, never someone else's. */
   usesClientSession?: boolean;
-  /** Top-level msgTag of official chat (short enum-like values only, e.g. how the message was produced). */
-  msgTag?: Record<string, string | number | boolean>;
+  /** Top-level msgTag of official chat (small flag-like values only, e.g. how the message was produced). */
+  msgTag?: Record<string, unknown>;
 };
 
-// msgTag values are short enum-like flags; anything else (free text, long tokens) is never copied or shown.
-const ENUM_VALUE = /^[A-Za-z0-9_.-]{0,32}$/;
-function enumFields(value: unknown): Record<string, string | number | boolean> {
-  const out: Record<string, string | number | boolean> = {};
-  for (const [key, child] of Object.entries(asRecord(parseJsonString(value)))) {
-    if (typeof child === "number" || typeof child === "boolean" || (typeof child === "string" && ENUM_VALUE.test(child))) out[key] = child;
+// msgTag holds small flags (numbers, booleans, null, short codes, possibly nested). Long strings could be
+// tokens or text, so they are never copied; the whole tag must stay small.
+const SHORT_CODE = /^[^\s]{0,32}$/;
+function flagValue(value: unknown, depth = 0): { ok: boolean; value?: unknown } {
+  if (value === null || typeof value === "number" || typeof value === "boolean") return { ok: true, value };
+  if (typeof value === "string") return SHORT_CODE.test(value) ? { ok: true, value } : { ok: false };
+  if (depth < 2 && value && typeof value === "object") {
+    const entries = Array.isArray(value) ? value.map((v, i) => [String(i), v] as const) : Object.entries(value);
+    const out: Record<string, unknown> | unknown[] = Array.isArray(value) ? [] : {};
+    for (const [key, child] of entries) {
+      const checked = flagValue(child, depth + 1);
+      if (!checked.ok) return { ok: false };
+      (out as Record<string, unknown>)[key] = checked.value;
+    }
+    return { ok: true, value: out };
   }
-  return out;
+  return { ok: false };
+}
+function enumFields(value: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(asRecord(parseJsonString(value)))) {
+    const checked = flagValue(parseJsonString(child));
+    if (checked.ok) out[key] = checked.value;
+  }
+  return JSON.stringify(out).length <= 400 ? out : {};
+}
+/** Masked shape of msgTag for comparison: types and lengths, never the values. */
+function tagShape(value: unknown): Record<string, string> {
+  return Object.fromEntries(Object.entries(asRecord(parseJsonString(value))).map(([key, child]) => {
+    const parsed = parseJsonString(child);
+    return [key, parsed === null ? "null" : typeof parsed === "string" ? `string:${parsed.length}${/\s/.test(parsed) ? ":spaces" : ""}` : Array.isArray(parsed) ? `array:${parsed.length}` : typeof parsed === "object" ? `object{${Object.keys(parsed as object).join(",")}}` : typeof parsed];
+  }));
 }
 
 export type RealtimeChatSendResult = {
@@ -423,7 +447,8 @@ export function describeChatMessageFormat(raw: unknown, direction: "in" | "out")
     bodyLength: readString(message.msg_body_)?.length ?? 0,
     ext: describe(ext),
     clientExt: describe(asRecord(parseJsonString(ext.clientExt))),
-    msgTag: enumFields(ext.msgTag),
+    msgTag: tagShape(ext.msgTag),
+    msgTagCopied: enumFields(ext.msgTag),
     serverExt: Object.fromEntries(Object.entries(asRecord(parseJsonString(ext.serverExt))).map(([key, value]) => [key,
       typeof value === "number" ? `number:${String(value).length}digits` : typeof value === "string" && /^\d+$/.test(value) ? `digits:${value.length}` : typeof value])),
     setting: Object.fromEntries(Object.entries(setting).filter(([key]) => key !== "ext_").map(([key, value]) => [key, typeof value === "string" ? "string" : value])),
