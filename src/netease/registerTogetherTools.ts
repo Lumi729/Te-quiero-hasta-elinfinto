@@ -103,6 +103,7 @@ export function registerNeteaseTogetherTools(
           learnedFrom: z.enum(["text", "custom", "playback", "other"]),
           learnedAtMs: z.number(),
           usesClientSession: z.boolean().optional(),
+          msgTag: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
         }).nullable().optional(),
         textFormats: z.object({
           lastIn: z.record(z.string(), z.unknown()).nullable(),

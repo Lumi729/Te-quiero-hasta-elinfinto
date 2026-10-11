@@ -65,7 +65,19 @@ export type RoomMessageFormat = {
   learnedAtMs: number;
   /** The room's messages carry a device session id; we then send our own, never someone else's. */
   usesClientSession?: boolean;
+  /** Top-level msgTag of official chat (short enum-like values only, e.g. how the message was produced). */
+  msgTag?: Record<string, string | number | boolean>;
 };
+
+// msgTag values are short enum-like flags; anything else (free text, long tokens) is never copied or shown.
+const ENUM_VALUE = /^[A-Za-z0-9_.-]{0,32}$/;
+function enumFields(value: unknown): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, child] of Object.entries(asRecord(parseJsonString(value)))) {
+    if (typeof child === "number" || typeof child === "boolean" || (typeof child === "string" && ENUM_VALUE.test(child))) out[key] = child;
+  }
+  return out;
+}
 
 export type RealtimeChatSendResult = {
   ok: true;
@@ -385,7 +397,8 @@ export function learnRoomMessageFormat(raw: unknown, roomId: string, receivedAtM
   const msgType = readNumber(asRecord(raw).msg_type_);
   const learnedFrom = findPlaybackEnvelope(raw) ? "playback" : msgType === 0 ? "text" : msgType === 100 ? "custom" : "other";
   const usesClientSession = typeof found.client.clientSessionId === "string";
-  return { ltType, extra, learnedFrom, learnedAtMs: receivedAtMs, ...(usesClientSession ? { usesClientSession } : {}) };
+  const msgTag = enumFields(found.top.msgTag);
+  return { ltType, extra, learnedFrom, learnedAtMs: receivedAtMs, ...(usesClientSession ? { usesClientSession } : {}), ...(Object.keys(msgTag).length ? { msgTag } : {}) };
 }
 
 /** Masked structure of a chat message for TOGETHER_CHAT_DIAGNOSTICS: no text, nick, avatar or full ids. */
@@ -410,6 +423,7 @@ export function describeChatMessageFormat(raw: unknown, direction: "in" | "out")
     bodyLength: readString(message.msg_body_)?.length ?? 0,
     ext: describe(ext),
     clientExt: describe(asRecord(parseJsonString(ext.clientExt))),
+    msgTag: enumFields(ext.msgTag),
     serverExt: Object.fromEntries(Object.entries(asRecord(parseJsonString(ext.serverExt))).map(([key, value]) => [key,
       typeof value === "number" ? `number:${String(value).length}digits` : typeof value === "string" && /^\d+$/.test(value) ? `digits:${value.length}` : typeof value])),
     setting: Object.fromEntries(Object.entries(setting).filter(([key]) => key !== "ext_").map(([key, value]) => [key, typeof value === "string" ? "string" : value])),
@@ -434,7 +448,7 @@ export function buildRealtimeChatTextMessage(
   roomId: string,
   messageId: string = randomUUID(),
   senderProfile?: RealtimeMemberProfile,
-  roomFormat?: Pick<RoomMessageFormat, "ltType" | "extra" | "usesClientSession"> | null,
+  roomFormat?: Pick<RoomMessageFormat, "ltType" | "extra" | "usesClientSession" | "msgTag"> | null,
   clientSessionId?: string,
 ): Record<string, unknown> {
   const normalized = text.trim();
@@ -459,6 +473,8 @@ export function buildRealtimeChatTextMessage(
   const ext = JSON.stringify({
     ...(serverExt ? { serverExt } : {}),
     appName: "music",
+    // Official chat marks how a message was produced; the owner's phone may drop untagged chat from history.
+    ...(roomFormat?.msgTag ? { msgTag: roomFormat.msgTag } : {}),
     clientExt: {
       ...(roomFormat?.extra ?? {}),
       bizType: "listenTogether",

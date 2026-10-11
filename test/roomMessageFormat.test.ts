@@ -62,3 +62,15 @@ test("format comparison shows setting flags and serverExt shape, not values", ()
   const line = JSON.stringify(out);
   for (const secret of ["Infinito_LY", "https://x/y.jpg", "18023854293"]) assert.ok(!line.includes(secret), secret);
 });
+
+test("AI chat carries the room's msgTag flags like official chat, never free text", () => {
+  const raw = incoming("MULTI_MATCH_SONG", "room-3");
+  const ext = JSON.parse(raw.msg_setting_.ext_);
+  ext.msgTag = { msgUserSource: "USER", userMsgGenerationMode: 1, note: "free text here!" };
+  raw.msg_setting_.ext_ = JSON.stringify(ext);
+  const format = learnRoomMessageFormat(raw, "room-3")!;
+  assert.deepEqual(format.msgTag, { msgUserSource: "USER", userMsgGenerationMode: 1 });
+  const msg = buildRealtimeChatTextMessage("hi", "room-3", "11111111-2222-3333-4444-555555555555", undefined, format, "s");
+  assert.deepEqual(JSON.parse((msg.msg_setting_ as { ext_: string }).ext_).msgTag, { msgUserSource: "USER", userMsgGenerationMode: 1 });
+  assert.equal(JSON.parse((buildRealtimeChatTextMessage("hi", "r2").msg_setting_ as { ext_: string }).ext_).msgTag, undefined, "two-person rooms unchanged");
+});
