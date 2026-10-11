@@ -29,6 +29,20 @@ fs.chmodSync(keyFile, 0o600);
 const password = fs.readFileSync(keyFile, 'utf8').trim();
 if (password.length < 32) throw new Error('Access key is too short');
 const pending = new Map(), codes = new Map(), access = new Map(), refresh = new Map();
+// Logins survive a gateway restart: only SHA-256 hashes of tokens are stored (0600), never the tokens.
+const tokensFile = path.join(DIR, '.oauth-tokens.json');
+try {
+  const saved = JSON.parse(fs.readFileSync(tokensFile, 'utf8'));
+  for (const [name, map] of [['access', access], ['refresh', refresh]])
+    for (const [key, item] of saved[name] || []) if (/^[0-9a-f]{64}$/.test(key) && item && item.expires > Date.now()) map.set(key, item);
+} catch {}
+function saveTokens() {
+  try {
+    const temporary = tokensFile + '.tmp';
+    fs.writeFileSync(temporary, JSON.stringify({access: [...access], refresh: [...refresh]}), {mode: 0o600});
+    fs.renameSync(temporary, tokensFile);
+  } catch (err) { console.error('Could not save login state: ' + (err && err.code)); }
+}
 let failures = [], registrations = [];
 // Registered Claude clients survive restarts (public clients, no secrets); tokens stay in memory only.
 const MAX_CLIENTS = 20;
@@ -89,6 +103,7 @@ function issue(res, client, resource) {
   const at = random(), rt = random();
   access.set(hash(at).toString('hex'), {expires: Date.now() + 3600000, resource, scope: 'music'});
   refresh.set(hash(rt).toString('hex'), {expires: Date.now() + 30 * 86400000, client, resource});
+  saveTokens();
   json(res, 200, {access_token: at, token_type: 'Bearer', expires_in: 3600, refresh_token: rt, scope: 'music'});
 }
 function proxy(req, res, targetPath = '/mcp/music') {

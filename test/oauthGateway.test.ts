@@ -192,3 +192,19 @@ test("upgrade script keeps the connection key and refuses unknown gateways", asy
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("logins survive a gateway restart (only token hashes are stored)", async () => {
+  const gw = await startGateway();
+  let current = gw;
+  try {
+    const { code, verifier } = await authorize(gw.base, "cove-chatgpt", CHATGPT, ORIGIN + "/mcp/music");
+    const tokens = await (await fetch(gw.base + "/oauth/token", form({ grant_type: "authorization_code", code, redirect_uri: CHATGPT, client_id: "cove-chatgpt", code_verifier: verifier }))).json();
+    current = await gw.restart();
+    const call = await fetch(current.base + "/mcp/music", { method: "POST", headers: { authorization: "Bearer " + tokens.access_token } });
+    assert.equal(call.status, 200, "access token still valid after restart");
+    const refreshed = await fetch(current.base + "/oauth/token", form({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: "cove-chatgpt" }));
+    assert.equal(refreshed.status, 200, "refresh token still valid after restart");
+  } finally {
+    await current.stop();
+  }
+});

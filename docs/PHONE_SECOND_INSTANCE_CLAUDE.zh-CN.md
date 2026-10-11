@@ -43,6 +43,7 @@ proot-distro login cove -- cat /root/cove-claude/ops/phone-claude/cove.sh > ~/co
 | 看运行状态 | `bash ~/cove.sh status` |
 | 完整体检（含外网 401 / 元数据，不显示 Cookie 和 token） | `bash ~/cove.sh check` |
 | 看各个窗口的输出 | `bash ~/cove.sh look`（Ctrl+B 再按 n 切换，Ctrl+B 再按 d 退出查看） |
+| 更新代码后只重启两个音乐服务（登录不受影响，不用重连） | `bash ~/cove.sh restart` |
 | 全部停止 / 只停一份 | `bash ~/cove.sh stop` / `bash ~/cove.sh stop claude` |
 
 每个服务在 tmux 里有自己的窗口，关掉 Termux 界面也继续运行；启动时会自动申请 wakelock。
@@ -73,3 +74,5 @@ ChatGPT 这份照旧：`cd /root/qianqian-music && git pull --ff-only && npm run
 - 想让两个 AI 完全不理对方：在配置里加 `NETEASE_PEER_MESSAGE_LIMIT=0`
   （ChatGPT 那份写在启动命令前，Claude 那份写进 `/root/cove-claude-secrets/bridge.env`）。
 - 「主人」是 `NETEASE_INVITER_UID`；没填时，就是邀请这个账号进房间的人。
+
+授权服务把登录状态（只存令牌的哈希）保存在各自的授权目录里，重启授权服务后 Claude / ChatGPT 也不用重新连接。
