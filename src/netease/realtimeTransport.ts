@@ -839,7 +839,8 @@ export class NeteaseRealtimeTransport {
           // A human/official text message is the best template; do not let other kinds override it.
           if (!previous || format.learnedFrom === "text" || previous.learnedFrom !== "text") {
             this.status.roomMessageFormat = format;
-            if (previous?.ltType !== format.ltType || previous?.learnedFrom !== format.learnedFrom) saveRoomFormat(this.status.roomId, format);
+            const shape = (f: RoomMessageFormat | null | undefined) => f ? JSON.stringify([f.ltType, f.learnedFrom, f.extra, f.msgTag ?? null, !!f.usesClientSession]) : "";
+            if (shape(previous) !== shape(format)) saveRoomFormat(this.status.roomId, format);
           }
           if (previous?.ltType !== format.ltType) console.log(`NetEase room chat format: ltType=${format.ltType} from=${format.learnedFrom}`);
         }
