@@ -33,6 +33,8 @@ case "${1:-start}" in
     echo "Claude 音乐服务 8797：$(up 8797)"; echo "Claude 授权服务 8798：$(up 8798)"
     echo "Claude 隧道：$(running claude-tunnel && echo '✓ 窗口开着' || echo '✗ 没开')";;
   check)
+    # Count only real cloudflared processes; the tmux shell wrapper's command line also names the config.
+    tunnels() { local n=0 p; for p in $(pgrep -x cloudflared); do tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "$1" && n=$((n+1)); done; echo "$n"; }
     scrub() { sed -E 's/((MUSIC_[A-Z_]*|__csrf|NMTID)=)[^; ]+/\1<hidden>/g; s/(Bearer )[A-Za-z0-9._~+\/-]+/\1<hidden>/g; s/([?&](code|session|token)=)[^& ]+/\1<hidden>/g'; }
     pub() { # domain → "401 ✓" style verdicts for the public address
       local d=$1 code meta
@@ -47,10 +49,10 @@ case "${1:-start}" in
     for n in gpt-music gpt-oauth gpt-tunnel claude claude-tunnel; do running "$n" || echo "窗口 $n 没开 ✗"; done
     echo "== Claude 那份（gege.lumi.org.cn）"
     echo "  本机 8797：$(up 8797)   本机 8798：$(up 8798)"; pub gege.lumi.org.cn
-    echo "  同时在跑的 Claude 隧道：$(pgrep -fc 'cove-claude.yml' || echo 0) 个（应为 1）"
+    echo "  同时在跑的 Claude 隧道：$(tunnels cove-claude.yml) 个（应为 1）"
     echo "== ChatGPT 那份（cove.lumi.org.cn）"
     echo "  本机 8787：$(up 8787)   本机 8788：$(up 8788)"; pub cove.lumi.org.cn
-    echo "  同时在跑的 ChatGPT 隧道：$(pgrep -fc 'cove-music.yml' || echo 0) 个（应为 1）"
+    echo "  同时在跑的 ChatGPT 隧道：$(tunnels cove-music.yml) 个（应为 1）"
     echo "== 各窗口最后几行（已遮住 Cookie / token）"
     for n in claude claude-tunnel gpt-tunnel; do
       running "$n" || continue
