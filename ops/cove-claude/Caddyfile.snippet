@@ -1,0 +1,10 @@
+# COVE_CLAUDE_SITE_V1 - only gege.lumi.org.cn; other sites are untouched.
+gege.lumi.org.cn {
+	@listener path /listener/events
+	reverse_proxy @listener 127.0.0.1:8797 {
+		flush_interval -1
+	}
+	reverse_proxy 127.0.0.1:8798 {
+		flush_interval -1
+	}
+}

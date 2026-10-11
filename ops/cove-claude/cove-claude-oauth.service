@@ -1,0 +1,26 @@
+# OAuth gateway for the Claude instance: https://gege.lumi.org.cn -> 127.0.0.1:8798 -> bridge 127.0.0.1:8797.
+[Unit]
+Description=Cove Resonance - Claude instance OAuth gateway
+After=network-online.target cove-claude.service
+Wants=network-online.target cove-claude.service
+
+[Service]
+Type=simple
+User=cove-claude
+Group=cove-claude
+WorkingDirectory=/opt/cove-claude/access
+Environment=COVE_PUBLIC_ORIGIN=https://gege.lumi.org.cn
+Environment=COVE_GATEWAY_PORT=8798
+Environment=COVE_UPSTREAM_PORT=8797
+Environment=COVE_ACCESS_DIR=/opt/cove-claude/access
+ExecStart=@NODE@ /opt/cove-claude/app/ops/oauth-gateway/oauth-gateway.cjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cove-claude/access
+
+[Install]
+WantedBy=multi-user.target

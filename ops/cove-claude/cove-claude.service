@@ -1,0 +1,28 @@
+# Second, fully independent Cove Resonance instance for Claude (gege.lumi.org.cn).
+# Own user, own env file, own private /tmp; never touches the ChatGPT instance.
+[Unit]
+Description=Cove Resonance - Claude instance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cove-claude
+Group=cove-claude
+WorkingDirectory=/opt/cove-claude/app
+EnvironmentFile=/etc/cove-claude/bridge.env
+Environment=HOME=/opt/cove-claude/home
+Environment=TZ=Asia/Shanghai
+ExecStart=@NODE@ dist/src/server.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cove-claude/home
+
+[Install]
+WantedBy=multi-user.target

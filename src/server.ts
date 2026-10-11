@@ -1,3 +1,4 @@
+import "./logRedaction.js";
 import { serveAudioResource } from "./netease/audioResources.js";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
@@ -16,6 +17,8 @@ import { InMemoryEventQueue } from "./queue.js";
 const PORT = Number(process.env.PORT ?? 8787);
 const INGEST_TOKEN = process.env.BRIDGE_INGEST_TOKEN ?? "";
 const UNIX_SOCKET = process.env.BRIDGE_UNIX_SOCKET?.trim() ?? "";
+// 0.0.0.0 keeps the original deployment unchanged; a second instance behind a gateway binds 127.0.0.1.
+const LISTEN_HOST = process.env.BRIDGE_LISTEN_HOST?.trim() || "0.0.0.0";
 const queue = new InMemoryEventQueue();
 const playbackState = new PlaybackStateStore();
 
@@ -166,8 +169,8 @@ export function createHttpServer() {
 }
 
 if (process.env.NODE_ENV !== "test") {
-  createHttpServer().listen(PORT, "0.0.0.0", () => {
-    console.log("Cove Resonance listening on http://0.0.0.0:" + PORT + " (MCP: /mcp, /mcp/music)");
+  createHttpServer().listen(PORT, LISTEN_HOST, () => {
+    console.log("Cove Resonance listening on http://" + LISTEN_HOST + ":" + PORT + " (MCP: /mcp, /mcp/music)");
     togetherWorker.start();
   });
 
